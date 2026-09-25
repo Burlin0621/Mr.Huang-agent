@@ -172,6 +172,23 @@ const activeAgentLabel = computed(() =>
   activeAgent.value.id === DEFAULT_AGENT_ID ? '智能体' : activeAgent.value.name,
 )
 
+/**
+ * 当前智能体实际生效的 system 提示词：
+ * - 基础值为智能体自身的 systemPrompt；
+ * - 合集智能体携带关联技能（linkedSkillIds）时逐个解析，跳过已删除或已停用的技能，
+ *   把剩余技能的方法论文档以纯文本块拼接在基础值之后，模型可直接运用而无须用户手动插入模板；
+ * - 一个技能都没解析到时不拼接，行为与普通智能体一致。
+ */
+const activeSystemPrompt = computed<string>(() => {
+  const base = activeAgent.value.systemPrompt
+  const linkedSkills = (activeAgent.value.linkedSkillIds ?? [])
+    .map((skillId) => skillsStore.findSkill(skillId))
+    .filter((skill): skill is SkillView => Boolean(skill && !skill.disabled))
+  if (linkedSkills.length === 0) return base
+  const skillBlocks = linkedSkills.map((skill) => `【技能：${skill.name}】\n${skill.template}`).join('\n\n')
+  return `${base}\n\n<已装载技能方法论：执行任务时可参考以下技能文档>\n\n${skillBlocks}\n</已装载技能方法论>`
+})
+
 function selectAgent(agentId: string): void {
   activeAgentId.value = agentId
   closePopover()
@@ -390,7 +407,7 @@ function buildRequestMessages(outgoingUserContent: string): LlmChatMessage[] {
   if (last && last.role === 'user') {
     last.content = outgoingUserContent
   }
-  const systemContent = buildSystemMessage(activeAgent.value.systemPrompt, goal.value)
+  const systemContent = buildSystemMessage(activeSystemPrompt.value, goal.value)
   return systemContent ? [{ role: 'system', content: systemContent }, ...history] : history
 }
 

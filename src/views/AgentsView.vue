@@ -388,23 +388,16 @@ async function onZipFileChange(event: Event): Promise<void> {
   }
 }
 
-/** 安装合集包：1 个智能体（skillsets 工作流）+ 包内全部技能（逐个查重后导入技能中心） */
+/** 安装合集包：先逐个导入包内技能（查重后跳过），再创建智能体并关联新创建的技能 id */
 function installExpertPackage(pkg: ZipExpertImportResult): void {
   const agentSkillhubId = `zip:${pkg.agent.skillDir}`
   if (agentsStore.isSkillhubAdded(agentSkillhubId)) {
     setGhStatus('warn', '该合集已安装')
     return
   }
-  agentsStore.addCustomAgent({
-    name: pkg.agent.name,
-    description: pkg.agent.description,
-    systemPrompt: pkg.agent.systemPrompt,
-    icon: '📦',
-    tags: ['SkillHub'],
-    skillhubId: agentSkillhubId,
-  })
 
-  let addedCount = 0
+  // 先导入技能并收集本次创建出的技能 id（已存在而跳过的不参与关联，避免悬空引用历史版本）
+  const linkedSkillIds: string[] = []
   let skippedCount = 0
   for (const skill of pkg.skills) {
     const skillhubId = `${agentSkillhubId}:${skill.skillKey}`
@@ -412,16 +405,28 @@ function installExpertPackage(pkg: ZipExpertImportResult): void {
       skippedCount += 1
       continue
     }
-    skillsStore.addCustomSkill({
-      name: skill.name,
-      description: skill.description,
-      template: skill.template,
-      icon: '📚',
-      tags: ['SkillHub'],
-      skillhubId,
-    })
-    addedCount += 1
+    linkedSkillIds.push(
+      skillsStore.addCustomSkill({
+        name: skill.name,
+        description: skill.description,
+        template: skill.template,
+        icon: '📚',
+        tags: ['SkillHub'],
+        skillhubId,
+      }),
+    )
   }
+
+  agentsStore.addCustomAgent({
+    name: pkg.agent.name,
+    description: pkg.agent.description,
+    systemPrompt: pkg.agent.systemPrompt,
+    icon: '📦',
+    tags: ['SkillHub'],
+    skillhubId: agentSkillhubId,
+    linkedSkillIds,
+  })
+  const addedCount = linkedSkillIds.length
 
   if (pkg.skills.length === 0) {
     setGhStatus('success', `已导入智能体「${pkg.agent.name}」（包内未解出可导入的技能）`)
@@ -502,6 +507,9 @@ function clearGhToken(): void {
             <h2 class="agent-name">{{ agent.name }}</h2>
             <span v-if="agent.builtin" class="chip chip-builtin">内置</span>
             <span v-if="agent.customized" class="chip chip-modified">已修改</span>
+            <span v-if="agent.linkedSkillIds.length > 0" class="chip chip-linked">
+              {{ agent.linkedSkillIds.length }} 技能
+            </span>
             <span v-if="agent.disabled" class="chip chip-off">停用</span>
             <span v-for="tag in agent.tags" :key="tag" class="chip chip-tag">{{ tag }}</span>
           </div>
@@ -973,6 +981,12 @@ function clearGhToken(): void {
 .chip-off {
   background: var(--color-warning-soft);
   color: var(--color-warning);
+}
+
+/* 关联技能数量徽标（合集智能体名称旁，表示对话时自动装载这些技能） */
+.chip-linked {
+  background: var(--color-success-soft);
+  color: var(--color-success);
 }
 
 .chip-tag {

@@ -23,6 +23,8 @@ export interface CustomAgentData {
   tags: string[]
   /** 来源 SkillHub 技能 id（从 SkillHub 添加时携带，用于判断是否已添加）；普通自定义智能体无此字段 */
   skillhubId?: string
+  /** 关联的技能 id 列表（安装合集包时由创建出的技能 id 组成，对话时自动装载进 system 消息）；普通自定义智能体无此字段 */
+  linkedSkillIds?: string[]
 }
 
 /** 新建/编辑自定义智能体时的入参（id 由 store 生成或按原 id 保留） */
@@ -53,6 +55,8 @@ export interface AgentView {
   customized: boolean
   /** 是否已停用（停用后不出现在 AI 对话的智能体浮层中） */
   disabled: boolean
+  /** 关联的技能 id 列表（合集智能体携带；对话时自动把对应技能的方法论附加进 system 消息），其余智能体恒为空数组 */
+  linkedSkillIds: string[]
 }
 
 /** 校验 localStorage 中读出的条目是否为合法的自定义智能体 */
@@ -66,7 +70,10 @@ function isValidCustomAgent(value: unknown): value is CustomAgentData {
     typeof agent.systemPrompt === 'string' &&
     typeof agent.icon === 'string' &&
     Array.isArray(agent.tags) &&
-    agent.tags.every((tag) => typeof tag === 'string')
+    agent.tags.every((tag) => typeof tag === 'string') &&
+    (agent.linkedSkillIds === undefined ||
+      (Array.isArray(agent.linkedSkillIds) &&
+        agent.linkedSkillIds.every((skillId) => typeof skillId === 'string')))
   )
 }
 
@@ -77,7 +84,12 @@ function readCustomAgents(): CustomAgentData[] {
     if (!raw) return []
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
-    return parsed.filter(isValidCustomAgent).map((agent) => ({ ...agent, tags: [...agent.tags] }))
+    return parsed.filter(isValidCustomAgent).map((agent) => ({
+      ...agent,
+      tags: [...agent.tags],
+      // 关联技能 id 列表读取时拷贝，避免外部引用与持久化状态共享同一数组
+      ...(agent.linkedSkillIds ? { linkedSkillIds: [...agent.linkedSkillIds] } : {}),
+    }))
   } catch {
     // 数据损坏（非法 JSON 等）时回退空列表
     return []
@@ -157,6 +169,7 @@ export const useAgentsStore = defineStore('agents', () => {
         builtin: true,
         customized: Boolean(override),
         disabled: disabledIds.value.includes(agent.id),
+        linkedSkillIds: [],
       }
     }),
     ...customAgents.value.map((agent) => ({
@@ -164,6 +177,7 @@ export const useAgentsStore = defineStore('agents', () => {
       builtin: false,
       customized: false,
       disabled: disabledIds.value.includes(agent.id),
+      linkedSkillIds: [...(agent.linkedSkillIds ?? [])],
     })),
   ])
 
@@ -188,12 +202,18 @@ export const useAgentsStore = defineStore('agents', () => {
     const id = crypto.randomUUID()
     customAgents.value = [
       ...customAgents.value,
-      { ...data, icon: data.icon.trim() || DEFAULT_AGENT_ICON, tags: [...data.tags], id },
+      {
+        ...data,
+        icon: data.icon.trim() || DEFAULT_AGENT_ICON,
+        tags: [...data.tags],
+        ...(data.linkedSkillIds ? { linkedSkillIds: [...data.linkedSkillIds] } : {}),
+        id,
+      },
     ]
     return id
   }
 
-  /** 编辑自定义智能体；id 不存在时返回 false（未显式修改时保留原 skillhubId，避免编辑后丢失来源） */
+  /** 编辑自定义智能体；id 不存在时返回 false（未显式修改时保留原 skillhubId 与 linkedSkillIds，避免编辑后丢失来源与关联） */
   function updateCustomAgent(id: string, data: CustomAgentInput): boolean {
     const exists = customAgents.value.some((agent) => agent.id === id)
     if (!exists) return false
@@ -249,6 +269,8 @@ export const useAgentsStore = defineStore('agents', () => {
         systemPrompt: source.systemPrompt,
         icon: source.icon,
         tags: [...source.tags],
+        // 副本沿用源智能体的关联技能（副本与源共享同一批技能文档）
+        linkedSkillIds: [...source.linkedSkillIds],
       },
     ]
     return newId
