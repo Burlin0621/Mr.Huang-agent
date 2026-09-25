@@ -21,6 +21,8 @@ export interface CustomAgentData {
   systemPrompt: string
   icon: string
   tags: string[]
+  /** 来源 SkillHub 技能 id（从 SkillHub 添加时携带，用于判断是否已添加）；普通自定义智能体无此字段 */
+  skillhubId?: string
 }
 
 /** 新建/编辑自定义智能体时的入参（id 由 store 生成或按原 id 保留） */
@@ -191,16 +193,21 @@ export const useAgentsStore = defineStore('agents', () => {
     return id
   }
 
-  /** 编辑自定义智能体；id 不存在时返回 false */
+  /** 编辑自定义智能体；id 不存在时返回 false（未显式修改时保留原 skillhubId，避免编辑后丢失来源） */
   function updateCustomAgent(id: string, data: CustomAgentInput): boolean {
     const exists = customAgents.value.some((agent) => agent.id === id)
     if (!exists) return false
     customAgents.value = customAgents.value.map((agent) =>
       agent.id === id
-        ? { ...data, icon: data.icon.trim() || DEFAULT_AGENT_ICON, tags: [...data.tags], id }
+        ? { ...agent, ...data, icon: data.icon.trim() || DEFAULT_AGENT_ICON, tags: [...data.tags], id }
         : agent,
     )
     return true
+  }
+
+  /** 判断某 SkillHub 技能是否已添加为自定义智能体（存在同 skillhubId 的条目即 true） */
+  function isSkillhubAdded(skillhubId: string): boolean {
+    return customAgents.value.some((agent) => agent.skillhubId === skillhubId)
   }
 
   /** 编辑内置智能体：写入/更新覆盖快照（id 非内置时忽略并返回 false） */
@@ -288,6 +295,7 @@ export const useAgentsStore = defineStore('agents', () => {
     findAgent,
     addCustomAgent,
     updateCustomAgent,
+    isSkillhubAdded,
     updateBuiltinAgent,
     resetBuiltinAgent,
     removeCustomAgent,

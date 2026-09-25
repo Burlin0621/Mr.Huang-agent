@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { DEFAULT_AGENT_ID } from '@/lib/agents'
+import { SKILLHUB_AGENTS, type SkillhubAgentDefinition } from '@/lib/skillhub'
 import { useAgentsStore, type AgentView } from '@/stores/agents'
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -49,11 +50,13 @@ function onDocumentPointerDown(event: PointerEvent): void {
   closeMenu()
 }
 
-/** Esc 关闭：优先关模态，其次关菜单 */
+/** Esc 关闭：优先关模态（新建/编辑或 SkillHub），其次关菜单 */
 function onDocumentKeydown(event: KeyboardEvent): void {
   if (event.key !== 'Escape') return
   if (modalOpen.value) {
     closeModal()
+  } else if (skillhubOpen.value) {
+    closeSkillhubModal()
   } else if (openMenuId.value) {
     closeMenu()
   }
@@ -211,6 +214,42 @@ function resetBuiltinFromModal(): void {
   agentsStore.resetBuiltinAgent(agent.id)
   modalOpen.value = false
 }
+
+/* —— SkillHub 弹窗：内置技能目录一键添加为自定义智能体 —— */
+
+const skillhubOpen = ref(false)
+const skillhubKeyword = ref('')
+
+/** 按名称 / 描述 / 标签模糊过滤 SkillHub 目录 */
+const filteredSkillhubAgents = computed<SkillhubAgentDefinition[]>(() => {
+  const kw = skillhubKeyword.value.trim().toLowerCase()
+  if (!kw) return SKILLHUB_AGENTS
+  return SKILLHUB_AGENTS.filter((skill) =>
+    `${skill.name} ${skill.description} ${skill.tags.join(' ')}`.toLowerCase().includes(kw),
+  )
+})
+
+function openSkillhubModal(): void {
+  skillhubKeyword.value = ''
+  skillhubOpen.value = true
+}
+
+function closeSkillhubModal(): void {
+  skillhubOpen.value = false
+}
+
+/** 添加 SkillHub 技能为自定义智能体；弹窗保持打开，可连续添加多个 */
+function addSkillhubAgent(skill: SkillhubAgentDefinition): void {
+  if (agentsStore.isSkillhubAdded(skill.id)) return
+  agentsStore.addCustomAgent({
+    name: skill.name,
+    description: skill.description,
+    systemPrompt: skill.systemPrompt,
+    icon: skill.icon,
+    tags: [...skill.tags],
+    skillhubId: skill.id,
+  })
+}
 </script>
 
 <template>
@@ -220,10 +259,16 @@ function resetBuiltinFromModal(): void {
         <h1>智能体中心</h1>
         <p>管理内置与自定义智能体人设，统一用于 AI 对话</p>
       </div>
-      <button class="btn btn-primary" type="button" @click="openCreateModal">
-        <AppIcon name="plus" />
-        新建智能体
-      </button>
+      <div class="agents-head-actions">
+        <button class="btn btn-ghost" type="button" @click="openSkillhubModal">
+          <AppIcon name="sparkles" />
+          从 SkillHub 添加
+        </button>
+        <button class="btn btn-primary" type="button" @click="openCreateModal">
+          <AppIcon name="plus" />
+          新建智能体
+        </button>
+      </div>
     </header>
 
     <div class="agents-toolbar">
@@ -322,6 +367,67 @@ function resetBuiltinFromModal(): void {
       </EmptyState>
     </div>
 
+    <!-- SkillHub 添加模态：内置技能目录，可搜索并一键添加（不自动关闭，可连续添加） -->
+    <div v-if="skillhubOpen" class="modal-mask" @click.self="closeSkillhubModal">
+      <div
+        class="modal skillhub-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="从 SkillHub 添加智能体"
+      >
+        <header class="modal-head">
+          <h2>从 SkillHub 添加智能体</h2>
+          <button class="icon-button" type="button" aria-label="关闭" @click="closeSkillhubModal">
+            <AppIcon name="close" />
+          </button>
+        </header>
+
+        <div class="skillhub-body">
+          <div class="search-box skillhub-search">
+            <AppIcon name="search" />
+            <input
+              v-model="skillhubKeyword"
+              class="search-input"
+              type="text"
+              placeholder="搜索技能名称、描述或标签…"
+            />
+          </div>
+
+          <div v-if="filteredSkillhubAgents.length" class="skillhub-list">
+            <article
+              v-for="skill in filteredSkillhubAgents"
+              :key="skill.id"
+              class="skillhub-row"
+            >
+              <span class="agent-avatar skillhub-avatar" aria-hidden="true">{{ skill.icon }}</span>
+              <div class="agent-main">
+                <div class="agent-title-line">
+                  <h3 class="agent-name">{{ skill.name }}</h3>
+                  <span v-for="tag in skill.tags" :key="tag" class="chip chip-tag">{{ tag }}</span>
+                </div>
+                <p class="agent-desc">{{ skill.description }}</p>
+              </div>
+              <button
+                v-if="agentsStore.isSkillhubAdded(skill.id)"
+                class="btn btn-ghost btn-sm"
+                type="button"
+                disabled
+              >
+                已添加
+              </button>
+              <button v-else class="btn btn-primary btn-sm" type="button" @click="addSkillhubAgent(skill)">
+                添加
+              </button>
+            </article>
+          </div>
+
+          <div v-else class="skillhub-empty">
+            <EmptyState title="未找到匹配的技能" description="换个关键词试试，SkillHub 目录共收录 12 个技能。" />
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 新建 / 编辑模态 -->
     <div v-if="modalOpen" class="modal-mask" @click.self="closeModal">
       <div
@@ -416,6 +522,14 @@ function resetBuiltinFromModal(): void {
   align-items: flex-end;
   justify-content: space-between;
   gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+/* 头部操作按钮组：「从 SkillHub 添加」+「新建智能体」 */
+.agents-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 
@@ -778,5 +892,72 @@ function resetBuiltinFromModal(): void {
 /* 「恢复默认」靠左，与取消/保存分开 */
 .modal-reset {
   margin-right: auto;
+}
+
+/* —— SkillHub 添加模态 —— */
+
+/* 更宽的弹窗 + 纵向弹性布局：头部固定、列表区在剩余高度内滚动 */
+.skillhub-modal {
+  display: flex;
+  flex-direction: column;
+  max-width: 640px;
+}
+
+.skillhub-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 0;
+  padding: var(--space-5) var(--space-6) var(--space-6);
+}
+
+.skillhub-search {
+  max-width: none;
+}
+
+.skillhub-list {
+  flex: 1;
+  min-height: 0;
+  max-height: 46vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.skillhub-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  transition: background-color var(--transition-fast);
+}
+
+.skillhub-row:hover {
+  background: var(--color-surface-muted);
+}
+
+/* 行内小号头像 */
+.skillhub-avatar {
+  width: 40px;
+  height: 40px;
+  font-size: var(--font-size-lg);
+}
+
+.skillhub-row .agent-name {
+  font-size: var(--font-size-md);
+}
+
+/* 行尾按钮固定占位，避免添加前后宽度跳动 */
+.skillhub-row .btn-sm {
+  min-width: 76px;
+  margin-left: auto;
+}
+
+.skillhub-empty {
+  padding: var(--space-6) 0;
 }
 </style>
