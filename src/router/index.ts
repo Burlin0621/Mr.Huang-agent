@@ -6,6 +6,7 @@ import ChatView from '@/views/ChatView.vue'
 import DashboardView from '@/views/DashboardView.vue'
 import DataCenterView from '@/views/DataCenterView.vue'
 import SettingsView from '@/views/SettingsView.vue'
+import SkillsView from '@/views/SkillsView.vue'
 import TasksView from '@/views/TasksView.vue'
 
 declare module 'vue-router' {
@@ -33,6 +34,12 @@ const routes: RouteRecordRaw[] = [
     name: 'agents',
     component: AgentsView,
     meta: { title: '智能体中心' },
+  },
+  {
+    path: '/skills',
+    name: 'skills',
+    component: SkillsView,
+    meta: { title: '技能中心' },
   },
   {
     path: '/tasks',

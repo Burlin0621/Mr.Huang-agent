@@ -1,0 +1,773 @@
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+
+import { DEFAULT_SKILL_ICON, useSkillsStore, type SkillView } from '@/stores/skills'
+import AppIcon from '@/components/AppIcon.vue'
+import EmptyState from '@/components/EmptyState.vue'
+
+const router = useRouter()
+const skillsStore = useSkillsStore()
+
+/* —— 搜索与过滤 —— */
+
+const keyword = ref('')
+
+/** 按名称 / 描述 / 标签模糊过滤合并清单 */
+const filteredSkills = computed<SkillView[]>(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  if (!kw) return skillsStore.skills
+  return skillsStore.skills.filter((skill) =>
+    `${skill.name} ${skill.description} ${skill.tags.join(' ')}`.toLowerCase().includes(kw),
+  )
+})
+
+/* —— 卡片「更多」菜单（同屏只开一个；点外部 / Esc 关闭） —— */
+
+/** 当前打开菜单的卡片 id */
+const openMenuId = ref<string | null>(null)
+
+function toggleMenu(id: string): void {
+  openMenuId.value = openMenuId.value === id ? null : id
+}
+
+function closeMenu(): void {
+  openMenuId.value = null
+}
+
+/** 点击菜单外部时关闭 */
+function onDocumentPointerDown(event: PointerEvent): void {
+  if (!openMenuId.value) return
+  const target = event.target as HTMLElement | null
+  if (target?.closest('.skill-more')) return
+  closeMenu()
+}
+
+/** Esc 关闭：优先关模态，其次关菜单 */
+function onDocumentKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Escape') return
+  if (modalOpen.value) {
+    closeModal()
+  } else if (openMenuId.value) {
+    closeMenu()
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('pointerdown', onDocumentPointerDown)
+  document.addEventListener('keydown', onDocumentKeydown)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDocumentPointerDown)
+  document.removeEventListener('keydown', onDocumentKeydown)
+})
+
+/* —— 卡片操作 —— */
+
+/** 跳转 AI 对话并携带 skill 查询参数，把模板追加进输入框 */
+function useSkill(skill: SkillView): void {
+  void router.push({ path: '/chat', query: { skill: skill.id } })
+}
+
+/** 停用 / 启用（技能没有默认兜底，所有技能都可切换） */
+function toggleSkillDisabled(skill: SkillView): void {
+  closeMenu()
+  skillsStore.toggleDisabled(skill.id)
+}
+
+/** 复制为自定义副本 */
+function duplicateSkill(skill: SkillView): void {
+  closeMenu()
+  skillsStore.duplicateSkill(skill.id)
+}
+
+/** 删除自定义技能（二次确认） */
+function removeSkill(skill: SkillView): void {
+  closeMenu()
+  if (!window.confirm(`确定删除技能「${skill.name}」吗？删除后不可恢复。`)) return
+  skillsStore.removeCustomSkill(skill.id)
+}
+
+/* —— 新建 / 编辑模态表单 —— */
+
+interface SkillFormState {
+  name: string
+  description: string
+  template: string
+  icon: string
+  /** 标签以逗号分隔的原文，提交时再解析 */
+  tags: string
+}
+
+/** 空表单（图标留空，展示时回退默认 emoji） */
+function createEmptyForm(): SkillFormState {
+  return { name: '', description: '', template: '', icon: '', tags: '' }
+}
+
+const modalOpen = ref(false)
+/** 正在编辑的技能 id；null 表示新建 */
+const editingId = ref<string | null>(null)
+/** 正在编辑的技能快照（用于区分内置/自定义与是否已修改）；null 表示新建 */
+const editingSkill = ref<SkillView | null>(null)
+const form = ref<SkillFormState>(createEmptyForm())
+const formErrors = ref({ name: '', description: '', template: '' })
+
+/** 图标实时预览：优先图标字段，回退默认 emoji */
+const iconPreview = computed(() => form.value.icon.trim() || DEFAULT_SKILL_ICON)
+
+/** 标签占位回显用分隔符 */
+const TAGS_SEPARATOR = '，'
+
+function openCreateModal(): void {
+  editingId.value = null
+  editingSkill.value = null
+  form.value = createEmptyForm()
+  formErrors.value = { name: '', description: '', template: '' }
+  modalOpen.value = true
+}
+
+/** 打开编辑弹窗（内置与自定义均可编辑；表单回填当前生效值，内置有覆盖时即覆盖值） */
+function openEditModal(skill: SkillView): void {
+  editingId.value = skill.id
+  editingSkill.value = skill
+  form.value = {
+    name: skill.name,
+    description: skill.description,
+    template: skill.template,
+    icon: skill.icon,
+    tags: skill.tags.join(TAGS_SEPARATOR),
+  }
+  formErrors.value = { name: '', description: '', template: '' }
+  modalOpen.value = true
+}
+
+function closeModal(): void {
+  modalOpen.value = false
+}
+
+/** 解析标签输入：按中英文逗号拆分，trim 后去空去重 */
+function parseTags(input: string): string[] {
+  return Array.from(
+    new Set(
+      input
+        .split(/[,，]/)
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+    ),
+  )
+}
+
+function submitForm(): void {
+  const name = form.value.name.trim()
+  const description = form.value.description.trim()
+  const template = form.value.template.trim()
+  formErrors.value = {
+    name: name ? '' : '请输入名称',
+    description: description ? '' : '请输入描述',
+    template: template ? '' : '请输入模板内容',
+  }
+  if (!name || !description || !template) return
+
+  const payload = {
+    name,
+    description,
+    template,
+    icon: form.value.icon.trim(),
+    tags: parseTags(form.value.tags),
+  }
+  if (editingId.value) {
+    // 内置走覆盖层写入，自定义直接改列表；两分支共用同一套表单校验
+    if (editingSkill.value?.builtin) {
+      skillsStore.updateBuiltinSkill(editingId.value, payload)
+    } else {
+      skillsStore.updateCustomSkill(editingId.value, payload)
+    }
+  } else {
+    skillsStore.addCustomSkill(payload)
+  }
+  modalOpen.value = false
+}
+
+/** 恢复内置技能的代码默认（清空覆盖层，二次确认后关闭弹窗） */
+function resetBuiltinFromModal(): void {
+  const skill = editingSkill.value
+  if (!skill?.builtin) return
+  if (!window.confirm('确定恢复该内置技能的默认设置吗？当前修改将被清除。')) return
+  skillsStore.resetBuiltinSkill(skill.id)
+  modalOpen.value = false
+}
+</script>
+
+<template>
+  <div class="page">
+    <header class="page-head skills-head">
+      <div>
+        <h1>技能中心</h1>
+        <p>管理内置与自定义提示词模板技能，统一用于 AI 对话</p>
+      </div>
+      <button class="btn btn-primary" type="button" @click="openCreateModal">
+        <AppIcon name="plus" />
+        新建技能
+      </button>
+    </header>
+
+    <div class="skills-toolbar">
+      <div class="search-box">
+        <AppIcon name="search" />
+        <input
+          v-model="keyword"
+          class="search-input"
+          type="text"
+          placeholder="搜索名称、描述或标签…"
+        />
+      </div>
+      <span class="skills-count">共 {{ filteredSkills.length }} 个技能</span>
+    </div>
+
+    <div v-if="filteredSkills.length" class="skills-grid">
+      <article
+        v-for="skill in filteredSkills"
+        :key="skill.id"
+        class="skill-card"
+        :class="{ 'is-disabled': skill.disabled }"
+      >
+        <div class="skill-card-head">
+          <span class="skill-avatar" aria-hidden="true">{{ skill.icon || DEFAULT_SKILL_ICON }}</span>
+          <div class="skill-title-group">
+            <h2 class="skill-name">{{ skill.name }}</h2>
+            <div class="skill-meta">
+              <span v-if="skill.builtin" class="chip chip-builtin">内置</span>
+              <span v-if="skill.customized" class="chip chip-modified">已修改</span>
+              <span class="chip" :class="skill.disabled ? 'chip-off' : 'chip-on'">
+                {{ skill.disabled ? '停用' : '启用' }}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <p class="skill-desc">{{ skill.description }}</p>
+        <p class="skill-template">{{ skill.template }}</p>
+        <div v-if="skill.tags.length" class="skill-tags">
+          <span v-for="tag in skill.tags" :key="tag" class="chip chip-tag">{{ tag }}</span>
+        </div>
+
+        <div class="skill-actions">
+          <button
+            class="btn btn-primary btn-sm"
+            type="button"
+            :disabled="skill.disabled"
+            title="跳转到 AI 对话并把模板追加进输入框"
+            @click="useSkill(skill)"
+          >
+            <AppIcon name="chat" />
+            使用
+          </button>
+          <button
+            class="btn btn-ghost btn-sm"
+            type="button"
+            title="编辑技能"
+            @click="openEditModal(skill)"
+          >
+            <AppIcon name="edit" />
+            编辑
+          </button>
+          <div class="skill-more">
+            <button
+              class="icon-button"
+              type="button"
+              aria-label="更多操作"
+              @click.stop="toggleMenu(skill.id)"
+            >
+              <AppIcon name="more" />
+            </button>
+            <div v-if="openMenuId === skill.id" class="skill-menu">
+              <button class="menu-item" type="button" @click="toggleSkillDisabled(skill)">
+                {{ skill.disabled ? '启用' : '停用' }}
+              </button>
+              <button class="menu-item" type="button" @click="duplicateSkill(skill)">复制</button>
+              <button
+                v-if="!skill.builtin"
+                class="menu-item menu-danger"
+                type="button"
+                @click="removeSkill(skill)"
+              >
+                删除
+              </button>
+            </div>
+          </div>
+        </div>
+      </article>
+    </div>
+
+    <div v-else class="card">
+      <EmptyState title="未找到匹配的技能" description="换个关键词试试，或新建一个自定义技能。">
+        <button class="btn btn-primary" type="button" @click="openCreateModal">
+          <AppIcon name="plus" />
+          新建技能
+        </button>
+      </EmptyState>
+    </div>
+
+    <!-- 新建 / 编辑模态 -->
+    <div v-if="modalOpen" class="modal-mask" @click.self="closeModal">
+      <div
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="editingId ? '编辑技能' : '新建技能'"
+      >
+        <header class="modal-head">
+          <h2>{{ editingId ? '编辑技能' : '新建技能' }}</h2>
+          <button class="icon-button" type="button" aria-label="关闭" @click="closeModal">
+            <AppIcon name="close" />
+          </button>
+        </header>
+
+        <form class="modal-form" @submit.prevent="submitForm">
+          <label class="field">
+            <span class="field-label">名称<span class="field-required" aria-hidden="true">*</span></span>
+            <input v-model="form.name" class="field-input" type="text" placeholder="例如：周报生成器" />
+            <span v-if="formErrors.name" class="field-error">{{ formErrors.name }}</span>
+          </label>
+
+          <label class="field">
+            <span class="field-label">描述<span class="field-required" aria-hidden="true">*</span></span>
+            <input
+              v-model="form.description"
+              class="field-input"
+              type="text"
+              placeholder="一句话说明用途"
+            />
+            <span v-if="formErrors.description" class="field-error">{{ formErrors.description }}</span>
+          </label>
+
+          <label class="field">
+            <span class="field-label">模板<span class="field-required" aria-hidden="true">*</span></span>
+            <textarea
+              v-model="form.template"
+              class="field-input field-textarea"
+              rows="7"
+              placeholder="将追加进 AI 对话输入框的提示词文案，用户在模板后补充素材"
+            ></textarea>
+            <span v-if="formErrors.template" class="field-error">{{ formErrors.template }}</span>
+          </label>
+
+          <div class="field">
+            <span class="field-label">图标（emoji）</span>
+            <div class="icon-field">
+              <span class="skill-avatar icon-preview" aria-hidden="true">{{ iconPreview }}</span>
+              <input
+                v-model="form.icon"
+                class="field-input"
+                type="text"
+                placeholder="默认 ⚡，可留空"
+              />
+            </div>
+          </div>
+
+          <label class="field">
+            <span class="field-label">标签</span>
+            <input
+              v-model="form.tags"
+              class="field-input"
+              type="text"
+              placeholder="多个标签用逗号分隔，例如：写作, 润色"
+            />
+          </label>
+
+          <footer class="modal-foot">
+            <button
+              v-if="editingSkill?.customized"
+              class="btn btn-ghost modal-reset"
+              type="button"
+              @click="resetBuiltinFromModal"
+            >
+              恢复默认
+            </button>
+            <button class="btn btn-ghost" type="button" @click="closeModal">取消</button>
+            <button class="btn btn-primary" type="submit">保存</button>
+          </footer>
+        </form>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+/* —— 页面头部 —— */
+.skills-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+/* —— 工具行：搜索 + 计数 —— */
+.skills-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.search-box {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 220px;
+  max-width: 420px;
+  height: 40px;
+  padding: 0 var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  transition: border-color var(--transition-fast);
+}
+
+.search-box:focus-within {
+  border-color: var(--color-brand);
+}
+
+.search-box svg {
+  width: 16px;
+  height: 16px;
+  color: var(--color-text-muted);
+}
+
+.search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  outline: none;
+}
+
+.search-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.skills-count {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
+/* —— 卡片网格 —— */
+.skills-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-5);
+}
+
+.skill-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  transition:
+    background-color var(--transition-theme),
+    border-color var(--transition-theme),
+    box-shadow var(--transition-fast);
+}
+
+.skill-card:hover {
+  box-shadow: var(--shadow-md);
+}
+
+/* 停用的卡片整体降饱和 */
+.skill-card.is-disabled {
+  opacity: 0.62;
+  filter: saturate(0.55);
+}
+
+.skill-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.skill-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  background: var(--color-brand-soft);
+  font-size: var(--font-size-xl);
+  line-height: 1;
+}
+
+.skill-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.skill-name {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.skill-desc {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-template {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+}
+
+.skill-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* —— 徽章 chips —— */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.chip-builtin {
+  background: var(--color-brand-soft);
+  color: var(--color-brand);
+}
+
+/* 已被覆盖层修改的内置技能提示徽标 */
+.chip-modified {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.chip-on {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.chip-off {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.chip-tag {
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
+}
+
+/* —— 卡片操作区 —— */
+.skill-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: auto;
+  padding-top: var(--space-2);
+}
+
+.btn-sm {
+  height: 32px;
+  padding: 0 var(--space-4);
+  font-size: var(--font-size-sm);
+}
+
+.skill-more {
+  position: relative;
+  margin-left: auto;
+}
+
+.skill-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+  min-width: 128px;
+  padding: var(--space-1);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 8px var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-md);
+  text-align: left;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.menu-item:hover {
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+}
+
+.menu-danger {
+  color: var(--color-danger);
+}
+
+.menu-danger:hover {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+/* —— 新建 / 编辑模态 —— */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+  background: rgba(8, 12, 24, 0.55);
+}
+
+.modal {
+  width: 100%;
+  max-width: 560px;
+  max-height: calc(100vh - var(--space-8));
+  overflow-y: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-6);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.modal-head h2 {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+}
+
+.modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.field-label {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+
+.field-required {
+  margin-left: 2px;
+  color: var(--color-danger);
+}
+
+.field-input {
+  padding: 8px var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font: inherit;
+  transition: border-color var(--transition-fast);
+}
+
+.field-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.field-input:focus {
+  outline: none;
+  border-color: var(--color-brand);
+}
+
+.field-textarea {
+  resize: vertical;
+  min-height: 96px;
+  line-height: 1.6;
+}
+
+.field-error {
+  color: var(--color-danger);
+  font-size: var(--font-size-xs);
+}
+
+.icon-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.icon-preview {
+  width: 40px;
+  height: 40px;
+  font-size: var(--font-size-lg);
+}
+
+.icon-field .field-input {
+  flex: 1;
+}
+
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+}
+
+/* 「恢复默认」靠左，与取消/保存分开 */
+.modal-reset {
+  margin-right: auto;
+}
+</style>

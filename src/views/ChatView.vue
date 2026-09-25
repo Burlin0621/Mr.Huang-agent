@@ -13,7 +13,7 @@ import {
 } from '@/lib/llm'
 import { DEFAULT_AGENT_ID } from '@/lib/agents'
 import { useAgentsStore, type AgentView } from '@/stores/agents'
-import { BUILTIN_SKILLS, type SkillDefinition } from '@/lib/skills'
+import { useSkillsStore, type SkillView } from '@/stores/skills'
 import {
   ATTACHMENT_MAX_BYTES,
   buildConversationMarkdown,
@@ -30,6 +30,7 @@ const { configs, activeConfigId, activeConfig } = storeToRefs(llmStore)
 
 const route = useRoute()
 const agentsStore = useAgentsStore()
+const skillsStore = useSkillsStore()
 
 /* —— 当前使用的模型（配置 × 模型 二维选择） —— */
 
@@ -186,15 +187,20 @@ watch(
   },
 )
 
-/* —— 技能（提示词模板填入输入框） —— */
+/* —— 技能（提示词模板填入输入框；清单来自技能中心 store） —— */
 
 const inputEl = ref<HTMLTextAreaElement | null>(null)
 
-function applySkill(skill: SkillDefinition): void {
+/** 把模板追加进输入框：已有内容时以空行分隔，随后聚焦输入框 */
+function appendSkillTemplate(template: string): void {
   const base = userInput.value.replace(/\s+$/, '')
-  userInput.value = base ? `${base}\n\n${skill.template}` : skill.template
-  closePopover()
+  userInput.value = base ? `${base}\n\n${template}` : template
   void nextTick(() => inputEl.value?.focus())
+}
+
+function applySkill(skill: SkillView): void {
+  appendSkillTemplate(skill.template)
+  closePopover()
 }
 
 /* —— 附件（仅文本类；点击选择 / 拖拽 / 粘贴） —— */
@@ -577,6 +583,16 @@ onMounted(() => {
   ) {
     activeAgentId.value = agentId
   }
+
+  // 支持从技能中心跳转携带 ?skill=<id> 把模板追加进输入框（需存在且未停用）
+  const skillParam = route.query.skill
+  const skillId = Array.isArray(skillParam) ? skillParam[0] : skillParam
+  if (typeof skillId === 'string') {
+    const skill = skillsStore.enabledSkills.find((item) => item.id === skillId)
+    if (skill) {
+      appendSkillTemplate(skill.template)
+    }
+  }
 })
 
 onBeforeUnmount(() => {
@@ -850,22 +866,23 @@ onBeforeUnmount(() => {
           <p class="popover-tip">在「智能体中心」可管理内置与自定义智能体</p>
         </div>
 
-        <!-- 技能浮层 -->
+        <!-- 技能浮层（内置 + 自定义合并清单，过滤停用） -->
         <div v-else-if="activePopover === 'skill'" class="composer-popover popover-list">
           <button
-            v-for="skill in BUILTIN_SKILLS"
+            v-for="skill in skillsStore.enabledSkills"
             :key="skill.id"
             class="popover-item"
             type="button"
             @click="applySkill(skill)"
           >
+            <span class="popover-skill-avatar" aria-hidden="true">{{ skill.icon }}</span>
             <span class="popover-item-main">
               <span class="popover-item-title">{{ skill.name }}</span>
               <span class="popover-item-desc">{{ skill.description }}</span>
             </span>
             <AppIcon name="chevron-down" class="popover-skill-caret" />
           </button>
-          <p class="popover-tip">点击后模板将追加到输入框，补充素材即可发送</p>
+          <p class="popover-tip">点击后模板将追加到输入框；在「技能中心」可管理技能</p>
         </div>
 
         <!-- 更多菜单 -->
@@ -1422,6 +1439,20 @@ onBeforeUnmount(() => {
 
 /* 智能体浮层项的 emoji 头像 */
 .popover-agent-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-brand-soft);
+  font-size: var(--font-size-lg);
+  line-height: 1;
+}
+
+/* 技能浮层项的 emoji 图标 */
+.popover-skill-avatar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
