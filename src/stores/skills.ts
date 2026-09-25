@@ -9,6 +9,8 @@ const CUSTOM_SKILLS_KEY = 'mr-huang-agent:custom-skills'
 const DISABLED_SKILLS_KEY = 'mr-huang-agent:disabled-skills'
 /** 内置技能覆盖快照（id → 编辑内容）在 localStorage 中的持久化 key */
 const BUILTIN_OVERRIDES_KEY = 'mr-huang-agent:builtin-skill-overrides'
+/** 被移除的内置技能 id 列表在 localStorage 中的持久化 key（移除后隐藏展示，可随时恢复） */
+const REMOVED_SKILLS_KEY = 'mr-huang-agent:removed-skills'
 
 /** 图标缺省时的默认 emoji */
 export const DEFAULT_SKILL_ICON = '⚡'
@@ -129,6 +131,22 @@ function readBuiltinOverrides(): Record<string, BuiltinSkillOverride> {
   }
 }
 
+/** 读取被移除的内置技能 id 列表；异常时回退空数组（仅保留内置清单中的有效 id，与覆盖表清理策略一致） */
+function readRemovedIds(): string[] {
+  try {
+    const raw = localStorage.getItem(REMOVED_SKILLS_KEY)
+    if (!raw) return []
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(
+      (item): item is string =>
+        typeof item === 'string' && BUILTIN_SKILLS.some((skill) => skill.id === item),
+    )
+  } catch {
+    return []
+  }
+}
+
 export const useSkillsStore = defineStore('skills', () => {
   /** 自定义技能列表（持久化到 localStorage） */
   const customSkills = ref<CustomSkillData[]>(readCustomSkills())
@@ -139,35 +157,44 @@ export const useSkillsStore = defineStore('skills', () => {
   /** 内置技能覆盖快照表：id → 编辑内容（持久化到 localStorage） */
   const builtinOverrides = ref<Record<string, BuiltinSkillOverride>>(readBuiltinOverrides())
 
-  /** 合并视图清单：内置在前、自定义在后；内置存在覆盖快照时用快照整体覆盖展示字段 */
-  const skills = computed<SkillView[]>(() => [
-    ...BUILTIN_SKILLS.map((skill) => {
-      const override = builtinOverrides.value[skill.id]
-      return {
-        id: skill.id,
-        name: override?.name ?? skill.name,
-        description: override?.description ?? skill.description,
-        template: override?.template ?? skill.template,
-        icon: override?.icon ?? skill.icon ?? DEFAULT_SKILL_ICON,
-        tags: override ? [...override.tags] : [...(skill.tags ?? [])],
-        builtin: true,
-        customized: Boolean(override),
+  /** 被移除的内置技能 id 列表（持久化到 localStorage；移除后从技能中心与对话浮层消失，可恢复） */
+  const removedIds = ref<string[]>(readRemovedIds())
+
+  /** 合并视图清单：内置在前、自定义在后；被移除的内置不出现；内置存在覆盖快照时用快照整体覆盖展示字段 */
+  const skills = computed<SkillView[]>(() => {
+    const visibleBuiltins = BUILTIN_SKILLS.filter((skill) => !removedIds.value.includes(skill.id))
+    return [
+      ...visibleBuiltins.map((skill) => {
+        const override = builtinOverrides.value[skill.id]
+        return {
+          id: skill.id,
+          name: override?.name ?? skill.name,
+          description: override?.description ?? skill.description,
+          template: override?.template ?? skill.template,
+          icon: override?.icon ?? skill.icon ?? DEFAULT_SKILL_ICON,
+          tags: override ? [...override.tags] : [...(skill.tags ?? [])],
+          builtin: true,
+          customized: Boolean(override),
+          disabled: disabledIds.value.includes(skill.id),
+        }
+      }),
+      ...customSkills.value.map((skill) => ({
+        ...skill,
+        builtin: false,
+        customized: false,
         disabled: disabledIds.value.includes(skill.id),
-      }
-    }),
-    ...customSkills.value.map((skill) => ({
-      ...skill,
-      builtin: false,
-      customized: false,
-      disabled: disabledIds.value.includes(skill.id),
-    })),
-  ])
+      })),
+    ]
+  })
 
   /** 过滤掉停用后的清单（AI 对话浮层使用） */
   const enabledSkills = computed<SkillView[]>(() => skills.value.filter((skill) => !skill.disabled))
 
   /** 自定义技能数量 */
   const customCount = computed(() => customSkills.value.length)
+
+  /** 已移除的内置技能数量（用于页面展示「恢复」入口） */
+  const removedCount = computed(() => removedIds.value.length)
 
   /** 在合并清单中按 id 查找；找不到返回 undefined（调用方自行兜底） */
   function findSkill(id: string): SkillView | undefined {
@@ -226,6 +253,22 @@ export const useSkillsStore = defineStore('skills', () => {
     disabledIds.value = disabledIds.value.filter((disabledId) => disabledId !== id)
   }
 
+  /** 移除内置技能：记入移除清单后从技能中心与对话浮层消失（可随时恢复）；顺带清掉停用列表残留，恢复后即为启用态 */
+  function removeBuiltinSkill(id: string): boolean {
+    const isBuiltin = BUILTIN_SKILLS.some((skill) => skill.id === id)
+    if (!isBuiltin) return false
+    disabledIds.value = disabledIds.value.filter((disabledId) => disabledId !== id)
+    if (!removedIds.value.includes(id)) {
+      removedIds.value = [...removedIds.value, id]
+    }
+    return true
+  }
+
+  /** 恢复全部已移除的内置技能（清空移除清单） */
+  function restoreRemovedSkills(): void {
+    removedIds.value = []
+  }
+
   /** 复制任意技能（含内置）为自定义副本，名称加「副本」后缀，返回新 id；源不存在返回 null */
   function duplicateSkill(id: string): string | null {
     const source = findSkill(id)
@@ -252,7 +295,7 @@ export const useSkillsStore = defineStore('skills', () => {
       : [...disabledIds.value, id]
   }
 
-  // 三份状态变化 → 各自持久化到 localStorage（失败时静默降级，仅当前会话生效）
+  // 四份状态变化 → 各自持久化到 localStorage（失败时静默降级，仅当前会话生效）
   watch(customSkills, (next) => {
     try {
       localStorage.setItem(CUSTOM_SKILLS_KEY, JSON.stringify(next))
@@ -277,10 +320,19 @@ export const useSkillsStore = defineStore('skills', () => {
     }
   })
 
+  watch(removedIds, (next) => {
+    try {
+      localStorage.setItem(REMOVED_SKILLS_KEY, JSON.stringify(next))
+    } catch {
+      // 忽略持久化失败
+    }
+  })
+
   return {
     skills,
     enabledSkills,
     customCount,
+    removedCount,
     findSkill,
     addCustomSkill,
     isSkillImported,
@@ -288,6 +340,8 @@ export const useSkillsStore = defineStore('skills', () => {
     updateBuiltinSkill,
     resetBuiltinSkill,
     removeCustomSkill,
+    removeBuiltinSkill,
+    restoreRemovedSkills,
     duplicateSkill,
     toggleDisabled,
   }

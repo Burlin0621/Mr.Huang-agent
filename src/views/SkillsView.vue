@@ -112,6 +112,22 @@ function removeSkill(skill: SkillView): void {
   skillsStore.removeCustomSkill(skill.id)
 }
 
+/** 移除内置技能（二次确认；从技能中心与对话浮层消失，可随时恢复） */
+function removeBuiltinSkill(skill: SkillView): void {
+  closeMenu()
+  const message = `确定移除内置技能「${skill.name}」吗？移除后可随时点击页面上的「恢复已移除的内置技能」还原。`
+  if (!window.confirm(message)) return
+  skillsStore.removeBuiltinSkill(skill.id)
+}
+
+/** 恢复全部已移除的内置技能（二次确认） */
+function restoreRemovedSkills(): void {
+  const count = skillsStore.removedCount
+  if (count <= 0) return
+  if (!window.confirm(`确定恢复全部已移除的 ${count} 个内置技能吗？`)) return
+  skillsStore.restoreRemovedSkills()
+}
+
 /* —— 新建 / 编辑模态表单 —— */
 
 interface SkillFormState {
@@ -245,7 +261,17 @@ function resetBuiltinFromModal(): void {
           placeholder="搜索名称、描述或标签…"
         />
       </div>
-      <span class="skills-count">共 {{ filteredSkills.length }} 个技能</span>
+      <div class="skills-toolbar-meta">
+        <span class="skills-count">共 {{ filteredSkills.length }} 个技能</span>
+        <button
+          v-if="skillsStore.removedCount > 0"
+          class="restore-link"
+          type="button"
+          @click="restoreRemovedSkills"
+        >
+          已移除 {{ skillsStore.removedCount }} 个内置技能 · 恢复
+        </button>
+      </div>
     </div>
 
     <div v-if="filteredSkills.length" class="skills-grid">
@@ -256,7 +282,9 @@ function resetBuiltinFromModal(): void {
         :class="{ 'is-disabled': skill.disabled }"
       >
         <div class="skill-card-head">
-          <span class="skill-avatar" aria-hidden="true">{{ skill.icon || DEFAULT_SKILL_ICON }}</span>
+          <span class="skill-avatar" aria-hidden="true">{{
+            skill.icon || DEFAULT_SKILL_ICON
+          }}</span>
           <div class="skill-title-group">
             <h2 class="skill-name">{{ skill.name }}</h2>
             <div class="skill-meta">
@@ -325,6 +353,14 @@ function resetBuiltinFromModal(): void {
               >
                 删除
               </button>
+              <button
+                v-else
+                class="menu-item menu-danger"
+                type="button"
+                @click="removeBuiltinSkill(skill)"
+              >
+                移除
+              </button>
             </div>
           </div>
         </div>
@@ -357,24 +393,37 @@ function resetBuiltinFromModal(): void {
 
         <form class="modal-form" @submit.prevent="submitForm">
           <label class="field">
-            <span class="field-label">名称<span class="field-required" aria-hidden="true">*</span></span>
-            <input v-model="form.name" class="field-input" type="text" placeholder="例如：周报生成器" />
+            <span class="field-label"
+              >名称<span class="field-required" aria-hidden="true">*</span></span
+            >
+            <input
+              v-model="form.name"
+              class="field-input"
+              type="text"
+              placeholder="例如：周报生成器"
+            />
             <span v-if="formErrors.name" class="field-error">{{ formErrors.name }}</span>
           </label>
 
           <label class="field">
-            <span class="field-label">描述<span class="field-required" aria-hidden="true">*</span></span>
+            <span class="field-label"
+              >描述<span class="field-required" aria-hidden="true">*</span></span
+            >
             <input
               v-model="form.description"
               class="field-input"
               type="text"
               placeholder="一句话说明用途"
             />
-            <span v-if="formErrors.description" class="field-error">{{ formErrors.description }}</span>
+            <span v-if="formErrors.description" class="field-error">{{
+              formErrors.description
+            }}</span>
           </label>
 
           <label class="field">
-            <span class="field-label">模板<span class="field-required" aria-hidden="true">*</span></span>
+            <span class="field-label"
+              >模板<span class="field-required" aria-hidden="true">*</span></span
+            >
             <textarea
               v-model="form.template"
               class="field-input field-textarea"
@@ -483,10 +532,31 @@ function resetBuiltinFromModal(): void {
   color: var(--color-text-muted);
 }
 
+.skills-toolbar-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  white-space: nowrap;
+}
+
 .skills-count {
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
   white-space: nowrap;
+}
+
+/* 次要文字按钮：恢复已移除的内置技能（hover 变主色，弱化展示不抢视觉） */
+.restore-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  transition: color var(--transition-fast);
+}
+
+.restore-link:hover {
+  color: var(--color-brand);
 }
 
 /* —— 卡片网格 —— */
