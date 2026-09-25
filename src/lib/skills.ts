@@ -1,7 +1,9 @@
 /**
  * 内置技能（提示词模板）：点击后把模板文案追加进输入框，
- * 用户在模板后补充素材即可发送。纯数据模块（零依赖）。
+ * 用户在模板后补充素材即可发送。数据模块（仅依赖同目录纯数据模块）。
  */
+
+import { SKILLHUB_AGENTS } from '@/lib/skillhub'
 
 export interface SkillDefinition {
   id: string
@@ -108,4 +110,18 @@ export const BUILTIN_SKILLS: SkillDefinition[] = [
     template:
       '请对下面的数据（表格/CSV 文本/业务描述）做结构化分析并输出结论：\n1. 数据概览：行数、字段、类型、缺失情况、时间范围；指出数据质量问题（缺失、异常值、重复）。\n2. 探索分析：关键分类字段的分布与占比；数值字段的统计摘要（均值/中位数/最值）；按业务意义给出 Top N 排名（销量/金额/频次等）；如有日期字段给出时间趋势（同比/环比变化）。\n3. 交叉分析：按有意义的维度分组对比（如地区×品类、渠道×时间），指出显著差异与可能原因。\n4. 输出结构：①数据概览 ②关键发现（每条附数据依据，编号列出）③异常与数据质量问题 ④可执行建议 ⑤建议的后续分析。\n原则：结论必须来自我提供的数据，不编造；无法从数据得出的推断要标注为推测；关键聚合结果用表格呈现，数字保留合理精度。\n数据如下：\n',
   },
+
+  // ---------- 以下 12 个来自旧项目 SkillHub 技能库，与方法论文档型技能模板 ----------
+  // 即 src/lib/skillhub.ts 的 SKILLHUB_AGENTS（300~1000 字方法论文档），此处收编为内置技能：
+  // systemPrompt 直接作为模板文案（template），id 与 skillhub 保持一致，
+  // 供「PRD 撰写」「UI 原型设计」「社媒运营」三个技能串联型智能体关联引用（见 src/lib/agents.ts）。
+
+  ...SKILLHUB_AGENTS.map((skill) => ({
+    id: skill.id,
+    name: skill.name,
+    description: skill.description,
+    template: skill.systemPrompt,
+    icon: skill.icon,
+    tags: skill.tags,
+  })),
 ]

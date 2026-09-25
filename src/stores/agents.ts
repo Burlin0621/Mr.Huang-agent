@@ -169,7 +169,9 @@ export const useAgentsStore = defineStore('agents', () => {
         builtin: true,
         customized: Boolean(override),
         disabled: disabledIds.value.includes(agent.id),
-        linkedSkillIds: [],
+        // 内置智能体的技能关联透传代码定义；覆盖层（builtin-overrides）不涉及 linkedSkillIds，
+        // 用户编辑名称/描述/提示词后仍保留代码里定义的技能串联
+        linkedSkillIds: agent.linkedSkillIds ? [...agent.linkedSkillIds] : [],
       }
     }),
     ...customAgents.value.map((agent) => ({
