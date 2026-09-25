@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233f62f6'/%3E%3Ctext x='16' y='21.5' font-family='Arial, sans-serif' font-size='15' font-weight='700' fill='%23ffffff' text-anchor='middle'%3EH%3C/text%3E%3C/svg%3E"
+    />
+    <title>Mr.Huang Agent</title>
+    <script>
+      // 首屏主题初始化：在应用挂载前设置 data-theme，避免深色模式下闪白
+      ;(function () {
+        var KEY = 'mr-huang-agent:theme'
+        var stored = null
+        try {
+          stored = localStorage.getItem(KEY)
+        } catch (err) {}
+        var theme =
+          stored === 'light' || stored === 'dark'
+            ? stored
+            : window.matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark'
+              : 'light'
+        document.documentElement.setAttribute('data-theme', theme)
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

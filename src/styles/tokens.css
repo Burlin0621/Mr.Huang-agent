@@ -1,0 +1,134 @@
+/* ==========================================================================
+   Mr.Huang Agent · 设计令牌（Design Tokens）
+   --------------------------------------------------------------------------
+   - :root                 浅色主题（默认）
+   - [data-theme="dark"]   深色主题（通过 html 根元素的 data-theme 属性启用）
+   - 令牌范围：颜色 / 圆角 / 间距 / 字体 / 阴影 / 动效 / 布局尺寸
+   - 组件样式一律引用令牌，禁止写死颜色值，保证深浅色主题完全可控
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  /* —— 颜色 · 页面与表面 —— */
+  --color-bg: #f3f5fa;
+  --color-surface: #ffffff;
+  --color-surface-muted: #edf0f8;
+  --color-border: #dfe3ee;
+  --color-border-strong: #c8cfdf;
+
+  /* —— 颜色 · 文字 —— */
+  --color-text: #20283c;
+  --color-text-secondary: #5a6480;
+  --color-text-muted: #8d95ab;
+
+  /* —— 颜色 · 品牌 —— */
+  --color-brand: #3f62f6;
+  --color-brand-strong: #3250dc;
+  --color-brand-soft: #e7edfe;
+  --color-on-brand: #ffffff;
+
+  /* —— 颜色 · 语义 —— */
+  --color-success: #189a55;
+  --color-success-soft: #e2f6ea;
+  --color-warning: #c87a06;
+  --color-warning-soft: #fcf0da;
+  --color-danger: #d43d3d;
+  --color-danger-soft: #fce9e9;
+
+  /* —— 侧边栏 —— */
+  --sidebar-bg: #182138;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-text: #c4cbdd;
+  --sidebar-text-muted: #7e88a3;
+  --sidebar-hover-bg: rgba(255, 255, 255, 0.06);
+  --sidebar-active-bg: rgba(63, 98, 246, 0.24);
+  --sidebar-active-text: #ffffff;
+
+  /* —— 顶栏 —— */
+  --topbar-bg: rgba(255, 255, 255, 0.85);
+  --topbar-border: var(--color-border);
+
+  /* —— 圆角 —— */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-full: 999px;
+
+  /* —— 间距（4px 基准） —— */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 48px;
+
+  /* —— 字体 —— */
+  --font-sans: 'Inter', 'HarmonyOS Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', system-ui,
+    -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 20px;
+  --font-size-2xl: 26px;
+
+  /* —— 阴影 —— */
+  --shadow-sm: 0 1px 2px rgba(24, 33, 56, 0.06), 0 1px 3px rgba(24, 33, 56, 0.05);
+  --shadow-md: 0 6px 16px rgba(24, 33, 56, 0.09);
+  --shadow-lg: 0 16px 40px rgba(24, 33, 56, 0.16);
+
+  /* —— 动效 —— */
+  --transition-fast: 150ms ease;
+  --transition-theme: 220ms ease;
+
+  /* —— 布局尺寸 —— */
+  --sidebar-width: 244px;
+  --topbar-height: 60px;
+  --content-max-width: 1160px;
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --color-bg: #121623;
+  --color-surface: #1a2032;
+  --color-surface-muted: #232a3f;
+  --color-border: #2d3550;
+  --color-border-strong: #3d4763;
+
+  --color-text: #e9ecf6;
+  --color-text-secondary: #a6aec7;
+  --color-text-muted: #737d99;
+
+  --color-brand: #6d87ff;
+  --color-brand-strong: #8599ff;
+  --color-brand-soft: rgba(109, 135, 255, 0.16);
+  --color-on-brand: #0c1122;
+
+  --color-success: #3fd08f;
+  --color-success-soft: rgba(63, 208, 143, 0.14);
+  --color-warning: #f2b23e;
+  --color-warning-soft: rgba(242, 178, 62, 0.14);
+  --color-danger: #f37f7f;
+  --color-danger-soft: rgba(243, 127, 127, 0.14);
+
+  --sidebar-bg: #101422;
+  --sidebar-border: rgba(255, 255, 255, 0.06);
+  --sidebar-text: #b9c1d6;
+  --sidebar-text-muted: #6d7793;
+  --sidebar-hover-bg: rgba(255, 255, 255, 0.05);
+  --sidebar-active-bg: rgba(109, 135, 255, 0.2);
+  --sidebar-active-text: #ffffff;
+
+  --topbar-bg: rgba(26, 32, 50, 0.85);
+  --topbar-border: var(--color-border);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 6px 16px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.55);
+}
