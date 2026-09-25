@@ -21,6 +21,8 @@ export interface CustomSkillData {
   template: string
   icon: string
   tags: string[]
+  /** SkillHub 来源标记（合集包导入时用于查重；手工创建的技能没有该字段） */
+  skillhubId?: string
 }
 
 /** 新建/编辑自定义技能时的入参（id 由 store 生成或按原 id 保留） */
@@ -182,6 +184,11 @@ export const useSkillsStore = defineStore('skills', () => {
     return id
   }
 
+  /** 判断某 SkillHub 技能是否已导入为自定义技能（存在同 skillhubId 的条目即 true） */
+  function isSkillImported(skillhubId: string): boolean {
+    return customSkills.value.some((skill) => skill.skillhubId === skillhubId)
+  }
+
   /** 编辑自定义技能；id 不存在时返回 false */
   function updateCustomSkill(id: string, data: CustomSkillInput): boolean {
     const exists = customSkills.value.some((skill) => skill.id === id)
@@ -276,6 +283,7 @@ export const useSkillsStore = defineStore('skills', () => {
     customCount,
     findSkill,
     addCustomSkill,
+    isSkillImported,
     updateCustomSkill,
     updateBuiltinSkill,
     resetBuiltinSkill,

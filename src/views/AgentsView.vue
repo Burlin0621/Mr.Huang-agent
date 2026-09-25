@@ -10,13 +10,16 @@ import {
   setGithubToken,
   SKILLHUB_AGENTS,
   type SkillhubAgentDefinition,
+  type ZipExpertImportResult,
 } from '@/lib/skillhub'
 import { useAgentsStore, type AgentView } from '@/stores/agents'
+import { useSkillsStore } from '@/stores/skills'
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
 
 const router = useRouter()
 const agentsStore = useAgentsStore()
+const skillsStore = useSkillsStore()
 
 /* —— 搜索与过滤 —— */
 
@@ -345,7 +348,7 @@ function pickZipFile(): void {
   zipFileInput.value?.click()
 }
 
-/** 选中 ZIP 后本地解析 → 查重 → 添加为自定义智能体；无论成败都清空 input 以便重选同名文件 */
+/** 选中 ZIP 后本地解析 → 按结果类型分流：单技能包装成智能体；合集包装 1 个智能体并把包内技能全部导入技能中心 */
 async function onZipFileChange(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
@@ -357,27 +360,76 @@ async function onZipFileChange(event: Event): Promise<void> {
   zipParsing.value = true
   setGhStatus('loading', '正在解析 ZIP 技能包…')
   try {
-    const skill = await parseSkillZip(file)
-    const skillhubId = `zip:${skill.skillDir}`
+    const result = await parseSkillZip(file)
+    if (result.kind === 'expert') {
+      installExpertPackage(result)
+      return
+    }
+
+    const skillhubId = `zip:${result.skillDir}`
     if (agentsStore.isSkillhubAdded(skillhubId)) {
       setGhStatus('warn', '该技能已安装为智能体')
       return
     }
     agentsStore.addCustomAgent({
-      name: skill.name,
-      description: skill.description,
-      systemPrompt: skill.systemPrompt,
+      name: result.name,
+      description: result.description,
+      systemPrompt: result.systemPrompt,
       icon: '📦',
       tags: ['SkillHub'],
       skillhubId,
     })
-    setGhStatus('success', `已导入为智能体：${skill.name}`)
+    setGhStatus('success', `已导入为智能体：${result.name}`)
   } catch (error) {
     setGhStatus('error', error instanceof Error ? error.message : '导入失败，请稍后再试')
   } finally {
     zipParsing.value = false
     input.value = ''
   }
+}
+
+/** 安装合集包：1 个智能体（skillsets 工作流）+ 包内全部技能（逐个查重后导入技能中心） */
+function installExpertPackage(pkg: ZipExpertImportResult): void {
+  const agentSkillhubId = `zip:${pkg.agent.skillDir}`
+  if (agentsStore.isSkillhubAdded(agentSkillhubId)) {
+    setGhStatus('warn', '该合集已安装')
+    return
+  }
+  agentsStore.addCustomAgent({
+    name: pkg.agent.name,
+    description: pkg.agent.description,
+    systemPrompt: pkg.agent.systemPrompt,
+    icon: '📦',
+    tags: ['SkillHub'],
+    skillhubId: agentSkillhubId,
+  })
+
+  let addedCount = 0
+  let skippedCount = 0
+  for (const skill of pkg.skills) {
+    const skillhubId = `${agentSkillhubId}:${skill.skillKey}`
+    if (skillsStore.isSkillImported(skillhubId)) {
+      skippedCount += 1
+      continue
+    }
+    skillsStore.addCustomSkill({
+      name: skill.name,
+      description: skill.description,
+      template: skill.template,
+      icon: '📚',
+      tags: ['SkillHub'],
+      skillhubId,
+    })
+    addedCount += 1
+  }
+
+  if (pkg.skills.length === 0) {
+    setGhStatus('success', `已导入智能体「${pkg.agent.name}」（包内未解出可导入的技能）`)
+    return
+  }
+  const detail =
+    skippedCount > 0 ? `（新增 ${addedCount} 个、跳过已存在 ${skippedCount} 个；技能可在技能中心查看）` : '（技能可在技能中心查看）'
+  setGhStatus('success', `已导入智能体「${pkg.agent.name}」与 ${addedCount} 个技能${detail}`)
 }
 
 /** 保存 Token 到本机（仅 localStorage），成功后面板切换为「已配置」态 */

@@ -495,12 +495,14 @@ function parseSkillMd(
 }
 
 /* ==========================================================================
-   ZIP 技能包上传安装：本地解析技能目录压缩包（内含 SKILL.md），装成智能体
+   ZIP 技能包上传安装：本地解析技能目录压缩包（内含 SKILL.md），装成智能体；
+   兼容 EvoFlow 合集包（manifest.json + skillsets/ 工作流 + skills/*.zip 内嵌技能）
    --------------------------------------------------------------------------
    - 不引入任何依赖，用浏览器原生能力手写 ZIP 解析：尾部回扫 EOCD → 遍历中央
      目录 → 按本地文件头切数据；deflate 用 DecompressionStream('deflate-raw')
      流式解压（Chromium 103+ 原生支持，无需 polyfill）
    - SKILL.md 解析与 GitHub 链接安装完全一致（同一 parseSkillMd）
+   - 条目表 / 单条目解压抽成内部函数，外层与内层（合集包 skills/*.zip）共用
    ========================================================================== */
 
 /** ZIP 文件大小上限（10MB），超限拒绝解析 */
@@ -537,21 +539,52 @@ function sanitizeZipBaseName(fileName: string): string {
   return safe || '未命名技能'
 }
 
+/** 单技能包导入结果（可直接作为自定义智能体入参） */
+export interface ZipSkillImportResult {
+  kind: 'skill'
+  name: string
+  description: string
+  systemPrompt: string
+  /** 技能目录名（SKILL.md 所在目录；根级时回退压缩包文件名） */
+  skillDir: string
+}
+
+/** 合集包解出的单个技能（可直接作为自定义技能入参） */
+export interface ZipExpertSkill {
+  name: string
+  description: string
+  /** 技能模板（内层 SKILL.md 清洗后的正文） */
+  template: string
+  /** 技能标识（内层技能目录名 / slug，用于「zip:合集:技能」粒度查重） */
+  skillKey: string
+}
+
+/** 合集包导入结果：1 个智能体（skillsets 工作流）+ N 个技能（包内 skills/*.zip） */
+export interface ZipExpertImportResult {
+  kind: 'expert'
+  /** 工作流清洗后得到的智能体定义；skillDir = manifest.slug（查重键 zip:{skillDir}） */
+  agent: { name: string; description: string; systemPrompt: string; skillDir: string }
+  skills: ZipExpertSkill[]
+}
+
+/** ZIP 上传导入结果：单技能包 / 合集包，调用方按 kind 分流处理 */
+export type ZipImportResult = ZipSkillImportResult | ZipExpertImportResult
+
+/** 合集包 manifest.json 的可识别字段（拿不到或类型不符的字段按空串处理） */
+interface ExpertPackageManifest {
+  type?: unknown
+  slug?: unknown
+  displayName?: unknown
+  summary?: unknown
+}
+
 /**
- * 解析 ZIP 技能包（技能目录打包，内含 SKILL.md）为智能体定义：
- * 1. 尾部回扫 EOCD（最多回扫 64KB+22，兼容注释尾）→ 读中央目录偏移与条目数
- * 2. 遍历中央目录条目：跳过目录项 / __MACOSX/ 噪音 / 隐藏文件；拒绝加密与 Zip64
- * 3. 定位 SKILL.md：优先根级，否则取路径深度最浅的子目录内 SKILL.md
- * 4. 按本地文件头（30 字节 + 文件名 + 扩展字段）切出压缩数据并解压
- * 5. UTF-8 解码后走与 GitHub 安装一致的 parseSkillMd；错误统一抛中文信息
+ * 从 ZIP 原始字节解析出中央目录条目表（外层技能包 / 合集包与内层 skills/*.zip
+ * 共用同一份解析）：尾部回扫 EOCD → 遍历中央目录 → 过滤目录项与噪音条目；
+ * 拒绝加密与 Zip64；错误统一抛中文信息。
  */
-export async function parseSkillZip(file: File): Promise<InstalledSkillLike> {
-  const buffer = await file.arrayBuffer()
-  if (buffer.byteLength > MAX_ZIP_BYTES) {
-    throw new Error('ZIP 文件过大（超过 10MB），暂不支持')
-  }
-  const bytes = new Uint8Array(buffer)
-  const view = new DataView(buffer)
+function readZipEntries(bytes: Uint8Array): ZipEntry[] {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
 
   // EOCD 固定 22 字节、尾部注释最长 65535 字节：从尾部向前扫描签名
   const eocdFloor = Math.max(0, bytes.length - 22 - 0xffff)
@@ -575,7 +608,10 @@ export async function parseSkillZip(file: File): Promise<InstalledSkillLike> {
   const entries: ZipEntry[] = []
   let cursor = centralOffset
   for (let index = 0; index < entryCount; index += 1) {
-    if (cursor + ZIP_CENTRAL_HEADER_SIZE > bytes.length || view.getUint32(cursor, true) !== ZIP_CENTRAL_SIGNATURE) {
+    if (
+      cursor + ZIP_CENTRAL_HEADER_SIZE > bytes.length ||
+      view.getUint32(cursor, true) !== ZIP_CENTRAL_SIGNATURE
+    ) {
       throw new Error('ZIP 文件无效或已损坏：中央目录读取失败，请重新打包技能目录后重试')
     }
     const flags = view.getUint16(cursor + 8, true)
@@ -598,21 +634,16 @@ export async function parseSkillZip(file: File): Promise<InstalledSkillLike> {
     if (name.split('/').some((segment) => segment.startsWith('.'))) continue // 隐藏文件（.DS_Store 等）
     entries.push({ name, method, compressedSize, localOffset })
   }
+  return entries
+}
 
-  // 定位 SKILL.md：优先根级；否则取路径深度最浅的 */SKILL.md
-  let target = entries.find((entry) => entry.name === 'SKILL.md')
-  if (!target) {
-    const nested = entries
-      .filter((entry) => entry.name.endsWith('/SKILL.md'))
-      .sort((a, b) => a.name.split('/').length - b.name.split('/').length)
-    target = nested[0]
-  }
-  if (!target) {
-    throw new Error('ZIP 中未找到 SKILL.md（技能包应包含 SKILL.md 文件）')
-  }
-
-  // 按本地文件头定位数据区：固定 30 字节 + 文件名 + 扩展字段之后才是压缩数据
-  const localOffset = target.localOffset
+/**
+ * 解压单个条目：按本地文件头（30 字节 + 文件名 + 扩展字段）切出压缩数据，
+ * deflate 用 DecompressionStream('deflate-raw') 流式解压，store 原样返回。
+ */
+async function readZipEntryBytes(bytes: Uint8Array, entry: ZipEntry): Promise<Uint8Array> {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const localOffset = entry.localOffset
   if (
     localOffset + ZIP_LOCAL_HEADER_SIZE > bytes.length ||
     view.getUint32(localOffset, true) !== ZIP_LOCAL_SIGNATURE
@@ -622,33 +653,209 @@ export async function parseSkillZip(file: File): Promise<InstalledSkillLike> {
   const localNameLength = view.getUint16(localOffset + 26, true)
   const localExtraLength = view.getUint16(localOffset + 28, true)
   const dataStart = localOffset + ZIP_LOCAL_HEADER_SIZE + localNameLength + localExtraLength
-  const compressed = bytes.subarray(dataStart, dataStart + target.compressedSize)
+  const compressed = bytes.subarray(dataStart, dataStart + entry.compressedSize)
 
-  let plain: Uint8Array
-  if (target.method === 8) {
+  if (entry.method === 8) {
     // deflate：原生 DecompressionStream('deflate-raw') 流式解压
     const stream = new Blob([compressed])
       .stream()
       .pipeThrough(new DecompressionStream('deflate-raw'))
-    plain = new Uint8Array(await new Response(stream).arrayBuffer())
-  } else if (target.method === 0) {
-    // store：数据原样存储，直接使用
-    plain = compressed
-  } else {
-    throw new Error('不支持的压缩方式（仅支持 store / deflate 的 ZIP）')
+    return new Uint8Array(await new Response(stream).arrayBuffer())
   }
+  if (entry.method === 0) {
+    // store：数据原样存储，直接使用
+    return compressed
+  }
+  throw new Error('不支持的压缩方式（仅支持 store / deflate 的 ZIP）')
+}
+
+/** 定位 SKILL.md 条目：优先根级；否则取路径深度最浅的子目录内 SKILL.md */
+function findSkillMdEntry(entries: ZipEntry[]): ZipEntry | undefined {
+  const root = entries.find((entry) => entry.name === 'SKILL.md')
+  if (root) return root
+  return entries
+    .filter((entry) => entry.name.endsWith('/SKILL.md'))
+    .sort((a, b) => a.name.split('/').length - b.name.split('/').length)[0]
+}
+
+/** manifest 字段读取：仅接受非空字符串，其余（缺失 / 类型不符）按空串处理 */
+function manifestString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+/**
+ * 读取根级 manifest.json 并解析；条目不存在或内容损坏（非法 JSON / 非对象）时
+ * 返回 null，由调用方回落单技能路径；不向外抛错。
+ */
+async function readExpertManifest(
+  bytes: Uint8Array,
+  entries: ZipEntry[],
+): Promise<ExpertPackageManifest | null> {
+  const manifestEntry = entries.find((entry) => entry.name === 'manifest.json')
+  if (!manifestEntry) return null
+  try {
+    const text = new TextDecoder('utf-8').decode(await readZipEntryBytes(bytes, manifestEntry))
+    const parsed: unknown = JSON.parse(text)
+    return typeof parsed === 'object' && parsed !== null ? (parsed as ExpertPackageManifest) : null
+  } catch {
+    // manifest 损坏时按不存在处理
+    return null
+  }
+}
+
+/**
+ * 合集包工作流文档（skillsets/*.md）→ 智能体提示词的轻量清洗（纯正则）：
+ * - 去 frontmatter（复用 parseFrontmatter 的正文提取）
+ * - 「你已安装以下 Skill，请按步骤串联使用」安装说明 → 「按以下步骤依次推进」
+ * - 删除单独成行的「使用 **技能名** 完成：」包装行（其后 bullets 保留）；
+ *   与其他正文同行时仅删除该包装前缀
+ * - 结尾不是完整中文句时追加中文回答约束
+ */
+function cleanSkillsetWorkflow(text: string): string {
+  let cleaned = parseFrontmatter(text).body
+  cleaned = cleaned.replace(
+    /你已安装以下\s*(?:Skill|技能)\s*[，,]?\s*(?:请按步骤串联使用)?/g,
+    '按以下步骤依次推进',
+  )
+  // 单独成行的包装词整行删除（其后 bullets 保留）
+  cleaned = cleaned.replace(/^[ \t]*使用[ \t]*\*\*[^*]+\*\*[ \t]*(?:完成|来完成)?[：:]?[ \t]*$/gm, '')
+  // 与其他正文同行的包装词只删前缀（含可选的「完成：」尾巴）
+  cleaned = cleaned.replace(
+    /(^|[-，。；：,;:>])[ \t]*使用[ \t]*\*\*[^*]+\*\*[ \t]*(?:完成|来完成)?[：:]?[ \t]*/gm,
+    '$1',
+  )
+  // 删行后收拢连续空行，首尾去空白
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim()
+  if (!/[。！？!?…”」)\]]\s*$/.test(cleaned)) {
+    cleaned = `${cleaned}\n\n除非用户另行要求，一律用中文回答。`
+  }
+  return cleaned
+}
+
+/**
+ * 解析合集包（EvoFlow skillhub-expert-package 格式）：
+ * - 智能体：skillsets/ 下最浅的第一个 .md 清洗为提示词，名称 / 描述取自 manifest
+ * - 技能：skills/*.zip 逐个解开内层 SKILL.md；单个失败（无 SKILL.md / 解压失败 /
+ *   超限）跳过不中断，全部失败也不报错（skills 为空数组）
+ */
+async function parseExpertPackage(
+  bytes: Uint8Array,
+  entries: ZipEntry[],
+  manifest: ExpertPackageManifest,
+  fallbackSlug: string,
+): Promise<ZipExpertImportResult> {
+  const skillDir = manifestString(manifest.slug) || fallbackSlug
+  const name = manifestString(manifest.displayName) || skillDir
+  // summary 单行化后超长 60 字截断，缺失时用回退文案
+  const summary = manifestString(manifest.summary).replace(/\s+/g, ' ')
+  const description = summary
+    ? summary.length > MAX_DESCRIPTION_LENGTH
+      ? `${summary.slice(0, MAX_DESCRIPTION_LENGTH)}…`
+      : summary
+    : '从合集包导入的智能体'
+
+  // 工作流文档：skillsets/ 下路径深度最浅的第一个 .md
+  const workflowEntry = entries
+    .filter((entry) => entry.name.startsWith('skillsets/') && entry.name.endsWith('.md'))
+    .sort((a, b) => a.name.split('/').length - b.name.split('/').length)[0]
+  if (!workflowEntry) {
+    throw new Error('合集包中未找到工作流文档：skillsets/ 目录应包含 .md 文件')
+  }
+  const workflowBytes = await readZipEntryBytes(bytes, workflowEntry)
+  if (workflowBytes.byteLength > MAX_SKILL_MD_BYTES) {
+    throw new Error('工作流文档过大（超过 100KB），暂不支持')
+  }
+  const systemPrompt = cleanSkillsetWorkflow(new TextDecoder('utf-8').decode(workflowBytes))
+
+  const skills: ZipExpertSkill[] = []
+  const innerZips = entries
+    .filter((entry) => /^skills\/[^/]+\.zip$/i.test(entry.name))
+    .sort((a, b) => a.name.localeCompare(b.name))
+  for (const entry of innerZips) {
+    const zipBase = entry.name.replace(/^skills\//i, '').replace(/\.zip$/i, '')
+    // 内层失败跳过，不影响其余技能与智能体导入
+    const skill = await parseInnerSkillZip(bytes, entry, zipBase).catch(() => null)
+    if (skill) skills.push(skill)
+  }
+  return { kind: 'expert', agent: { name, description, systemPrompt, skillDir }, skills }
+}
+
+/**
+ * 解开内层技能 zip（合集包 skills/ 下的条目）为技能条目：
+ * 找 SKILL.md（根级或最浅层）→ 与外层一致的 parseSkillMd；
+ * skillKey = 内层 SKILL.md 所在目录名，根级时回退 zip 文件名（即技能 slug）。
+ */
+async function parseInnerSkillZip(
+  outerBytes: Uint8Array,
+  entry: ZipEntry,
+  zipBase: string,
+): Promise<ZipExpertSkill> {
+  const innerBytes = await readZipEntryBytes(outerBytes, entry)
+  const innerEntries = readZipEntries(innerBytes)
+  const skillMd = findSkillMdEntry(innerEntries)
+  if (!skillMd) throw new Error(`内层 ZIP（${zipBase}.zip）中未找到 SKILL.md，已跳过`)
+
+  const plain = await readZipEntryBytes(innerBytes, skillMd)
+  if (plain.byteLength > MAX_SKILL_MD_BYTES) {
+    throw new Error(`内层 SKILL.md（${zipBase}）过大（超过 100KB），已跳过`)
+  }
+  const segments = skillMd.name.split('/')
+  const innerDir = segments.length >= 2 ? segments[segments.length - 2] : ''
+  const { name, description, systemPrompt } = parseSkillMd(
+    new TextDecoder('utf-8').decode(plain),
+    innerDir || zipBase,
+    '从合集包导入的技能',
+  )
+  return { name, description, template: systemPrompt, skillKey: innerDir || zipBase }
+}
+
+/**
+ * 解析 ZIP 上传文件为导入结果（判别联合，调用方按 kind 分流）：
+ * 1. 尾部回扫 EOCD → 遍历中央目录 → 过滤噪音条目；拒绝加密与 Zip64
+ * 2. 合集包检测：根级 manifest.json 有效且 type=skillhub-expert-package（或无
+ *    type 但存在 skillsets/ 条目）→ 1 个智能体 + 包内全部技能；manifest 损坏回落单技能
+ * 3. 单技能包：定位 SKILL.md（优先根级，否则最浅子目录）解压，UTF-8 解码后走与
+ *    GitHub 安装一致的 parseSkillMd；错误统一抛中文信息
+ */
+export async function parseSkillZip(file: File): Promise<ZipImportResult> {
+  const buffer = await file.arrayBuffer()
+  if (buffer.byteLength > MAX_ZIP_BYTES) {
+    throw new Error('ZIP 文件过大（超过 10MB），暂不支持')
+  }
+  const bytes = new Uint8Array(buffer)
+  const entries = readZipEntries(bytes)
+
+  // 合集包检测：manifest 类型匹配时走合集路径，否则回落单技能路径
+  const manifest = await readExpertManifest(bytes, entries)
+  const manifestType = manifestString(manifest?.type)
+  if (
+    manifest &&
+    (manifestType === 'skillhub-expert-package' ||
+      (manifestType === '' && entries.some((entry) => entry.name.startsWith('skillsets/'))))
+  ) {
+    return parseExpertPackage(bytes, entries, manifest, sanitizeZipBaseName(file.name))
+  }
+
+  // —— 单技能包路径（与合集包无关的普通技能目录压缩包）——
+  const target = findSkillMdEntry(entries)
+  if (!target) {
+    throw new Error(
+      'ZIP 中未找到 SKILL.md（技能包应包含 SKILL.md 文件；若是技能合集包，请确认包内含 manifest.json 与 skillsets/ 目录）',
+    )
+  }
+
+  const plain = await readZipEntryBytes(bytes, target)
   if (plain.byteLength > MAX_SKILL_MD_BYTES) {
     throw new Error('SKILL.md 过大（超过 100KB），暂不支持')
   }
 
   // 技能目录名：SKILL.md 的上一级目录；根级时回退压缩包文件名（仅取安全字符）
   const segments = target.name.split('/')
-  const skillDir =
-    segments.length >= 2 ? segments[segments.length - 2] : sanitizeZipBaseName(file.name)
+  const skillDir = segments.length >= 2 ? segments[segments.length - 2] : sanitizeZipBaseName(file.name)
   const { name, description, systemPrompt } = parseSkillMd(
     new TextDecoder('utf-8').decode(plain),
     skillDir,
     '从 ZIP 导入的技能智能体',
   )
-  return { name, description, systemPrompt, skillDir }
+  return { kind: 'skill', name, description, systemPrompt, skillDir }
 }
