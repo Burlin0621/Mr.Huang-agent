@@ -1,6 +1,26 @@
 <script setup lang="ts">
 type IconName =
-  'dashboard' | 'tasks' | 'data' | 'settings' | 'chat' | 'menu' | 'sun' | 'moon' | 'monitor' | 'plus'
+  | 'dashboard'
+  | 'tasks'
+  | 'data'
+  | 'settings'
+  | 'chat'
+  | 'menu'
+  | 'sun'
+  | 'moon'
+  | 'monitor'
+  | 'plus'
+  | 'target'
+  | 'paperclip'
+  | 'bot'
+  | 'sparkles'
+  | 'more'
+  | 'check'
+  | 'chevron-down'
+  | 'close'
+  | 'download'
+  | 'copy'
+  | 'trash'
 
 defineProps<{ name: IconName }>()
 </script>
@@ -52,6 +72,49 @@ defineProps<{ name: IconName }>()
     <template v-else-if="name === 'monitor'">
       <rect x="2" y="3" width="20" height="14" rx="2" />
       <path d="M8 21h8M12 17v4" />
+    </template>
+    <template v-else-if="name === 'target'">
+      <circle cx="12" cy="12" r="8.5" />
+      <circle cx="12" cy="12" r="4.5" />
+      <circle cx="12" cy="12" r="0.6" fill="currentColor" stroke="none" />
+    </template>
+    <template v-else-if="name === 'paperclip'">
+      <path
+        d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"
+      />
+    </template>
+    <template v-else-if="name === 'bot'">
+      <path d="M12 8V4H8" />
+      <rect x="4" y="8" width="16" height="12" rx="2" />
+      <path d="M2 14h2M20 14h2M9 13v2M15 13v2" />
+    </template>
+    <template v-else-if="name === 'sparkles'">
+      <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z" />
+      <path d="M19 17l.7 1.8L21.5 19.5l-1.8.7L19 22l-.7-1.8-1.8-.7 1.8-.7L19 17z" />
+    </template>
+    <template v-else-if="name === 'more'">
+      <circle cx="5" cy="12" r="1" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+      <circle cx="19" cy="12" r="1" fill="currentColor" stroke="none" />
+    </template>
+    <template v-else-if="name === 'check'">
+      <path d="M20 6L9 17l-5-5" />
+    </template>
+    <template v-else-if="name === 'chevron-down'">
+      <path d="M6 9l6 6 6-6" />
+    </template>
+    <template v-else-if="name === 'close'">
+      <path d="M18 6L6 18M6 6l12 12" />
+    </template>
+    <template v-else-if="name === 'download'">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+    </template>
+    <template v-else-if="name === 'copy'">
+      <rect x="9" y="9" width="13" height="13" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </template>
+    <template v-else-if="name === 'trash'">
+      <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
     </template>
     <template v-else>
       <path d="M12 5v14M5 12h14" />
