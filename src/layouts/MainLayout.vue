@@ -6,7 +6,7 @@ import AppIcon from '@/components/AppIcon.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import UserAvatar from '@/components/UserAvatar.vue'
 
-type NavIcon = 'dashboard' | 'tasks' | 'data' | 'settings' | 'chat'
+type NavIcon = 'dashboard' | 'tasks' | 'data' | 'settings' | 'chat' | 'bot'
 
 interface NavItem {
   to: string
@@ -22,6 +22,7 @@ const drawerOpen = ref(false)
 const navItems: NavItem[] = [
   { to: '/', label: '工作台', icon: 'dashboard' },
   { to: '/chat', label: 'AI 对话', icon: 'chat' },
+  { to: '/agents', label: '智能体中心', icon: 'bot' },
   { to: '/tasks', label: '任务中心', icon: 'tasks' },
   { to: '/data', label: '数据中心', icon: 'data' },
   { to: '/settings', label: '设置', icon: 'settings' },

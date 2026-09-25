@@ -21,6 +21,8 @@ type IconName =
   | 'download'
   | 'copy'
   | 'trash'
+  | 'search'
+  | 'edit'
 
 defineProps<{ name: IconName }>()
 </script>
@@ -115,6 +117,13 @@ defineProps<{ name: IconName }>()
     </template>
     <template v-else-if="name === 'trash'">
       <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+    </template>
+    <template v-else-if="name === 'search'">
+      <circle cx="11" cy="11" r="7" />
+      <path d="M21 21l-4.35-4.35" />
+    </template>
+    <template v-else-if="name === 'edit'">
+      <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
     </template>
     <template v-else>
       <path d="M12 5v14M5 12h14" />

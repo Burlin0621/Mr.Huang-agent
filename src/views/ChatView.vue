@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
 import { useLlmStore, type LlmConfig } from '@/stores/llm'
@@ -11,7 +11,8 @@ import {
   streamChatCompletion,
   type LlmChatMessage,
 } from '@/lib/llm'
-import { BUILTIN_AGENTS, DEFAULT_AGENT_ID, findAgentById } from '@/lib/agents'
+import { DEFAULT_AGENT_ID } from '@/lib/agents'
+import { useAgentsStore, type AgentView } from '@/stores/agents'
 import { BUILTIN_SKILLS, type SkillDefinition } from '@/lib/skills'
 import {
   ATTACHMENT_MAX_BYTES,
@@ -26,6 +27,9 @@ import AppIcon from '@/components/AppIcon.vue'
 
 const llmStore = useLlmStore()
 const { configs, activeConfigId, activeConfig } = storeToRefs(llmStore)
+
+const route = useRoute()
+const agentsStore = useAgentsStore()
 
 /* —— 当前使用的模型（配置 × 模型 二维选择） —— */
 
@@ -151,10 +155,15 @@ function clearGoal(): void {
   closePopover()
 }
 
-/* —— 智能体 —— */
+/* —— 智能体（内置 + 自定义合并清单，来自智能体中心 store） —— */
 
 const activeAgentId = ref<string>(DEFAULT_AGENT_ID)
-const activeAgent = computed(() => findAgentById(activeAgentId.value))
+
+/** 当前选中智能体：在合并清单中查找，找不到时回退通用助手 */
+const activeAgent = computed<AgentView>(
+  () => agentsStore.findAgent(activeAgentId.value) ?? agentsStore.defaultAgent,
+)
+
 const activeAgentLabel = computed(() =>
   activeAgent.value.id === DEFAULT_AGENT_ID ? '智能体' : activeAgent.value.name,
 )
@@ -163,6 +172,16 @@ function selectAgent(agentId: string): void {
   activeAgentId.value = agentId
   closePopover()
 }
+
+// 选中项被停用或删除（跨页操作）后，自动回退通用助手
+watch(
+  () => agentsStore.enabledAgents,
+  (enabled) => {
+    if (!enabled.some((agent) => agent.id === activeAgentId.value)) {
+      activeAgentId.value = DEFAULT_AGENT_ID
+    }
+  },
+)
 
 /* —— 技能（提示词模板填入输入框） —— */
 
@@ -545,6 +564,16 @@ watch(
 onMounted(() => {
   document.addEventListener('pointerdown', onDocumentPointerDown)
   document.addEventListener('keydown', onDocumentKeydown)
+
+  // 支持从智能体中心跳转携带 ?agent=<id> 预选（需存在且未停用）
+  const agentParam = route.query.agent
+  const agentId = Array.isArray(agentParam) ? agentParam[0] : agentParam
+  if (
+    typeof agentId === 'string' &&
+    agentsStore.enabledAgents.some((agent) => agent.id === agentId)
+  ) {
+    activeAgentId.value = agentId
+  }
 })
 
 onBeforeUnmount(() => {
@@ -789,22 +818,24 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <!-- 智能体浮层 -->
+        <!-- 智能体浮层（内置 + 自定义合并清单，过滤停用） -->
         <div v-else-if="activePopover === 'agent'" class="composer-popover popover-list">
           <button
-            v-for="agent in BUILTIN_AGENTS"
+            v-for="agent in agentsStore.enabledAgents"
             :key="agent.id"
             class="popover-item"
             :class="{ 'is-selected': agent.id === activeAgentId }"
             type="button"
             @click="selectAgent(agent.id)"
           >
+            <span class="popover-agent-avatar" aria-hidden="true">{{ agent.icon }}</span>
             <span class="popover-item-main">
               <span class="popover-item-title">{{ agent.name }}</span>
               <span class="popover-item-desc">{{ agent.description }}</span>
             </span>
             <AppIcon v-if="agent.id === activeAgentId" name="check" />
           </button>
+          <p class="popover-tip">在「智能体中心」可管理内置与自定义智能体</p>
         </div>
 
         <!-- 技能浮层 -->
@@ -1375,6 +1406,20 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+/* 智能体浮层项的 emoji 头像 */
+.popover-agent-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-brand-soft);
+  font-size: var(--font-size-lg);
+  line-height: 1;
 }
 
 .popover-item-title {
