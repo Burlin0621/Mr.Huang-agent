@@ -1,6 +1,6 @@
 <script setup lang="ts">
 type IconName =
-  'dashboard' | 'tasks' | 'data' | 'settings' | 'menu' | 'sun' | 'moon' | 'monitor' | 'plus'
+  'dashboard' | 'tasks' | 'data' | 'settings' | 'chat' | 'menu' | 'sun' | 'moon' | 'monitor' | 'plus'
 
 defineProps<{ name: IconName }>()
 </script>
@@ -33,6 +33,9 @@ defineProps<{ name: IconName }>()
     </template>
     <template v-else-if="name === 'settings'">
       <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6" />
+    </template>
+    <template v-else-if="name === 'chat'">
+      <path d="M21 11.5c0 4.14-4.03 7.5-9 7.5-1.02 0-2-.14-2.9-.4L4 21l1.5-4.1C4.2 15.7 3 13.7 3 11.5 3 7.36 7.03 4 12 4s9 3.36 9 7.5z" />
     </template>
     <template v-else-if="name === 'menu'">
       <path d="M3 6h18M3 12h18M3 18h18" />

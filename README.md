@@ -9,7 +9,7 @@
 
 ## 项目简介
 
-Mr.Huang Agent 工作台前端是一个基于 Vue 3 + Vite + TypeScript 的中后台工程骨架，内置布局、导航、路由、响应式与明暗主题系统，可作为后续业务模块迭代的基础。工程化配置（ESLint / Prettier / EditorConfig / GitHub Actions CI）已就绪，可直接推送至 GitHub 协作开发。
+Mr.Huang Agent 工作台前端是一个基于 Vue 3 + Vite + TypeScript 的中后台工程骨架，内置布局、导航、路由、响应式与明暗主题系统，可作为后续业务模块迭代的基础。工程化配置（ESLint / Prettier / EditorConfig / GitHub Actions CI）已就绪，可直接推送至 GitHub 协作开发。现已支持接入 OpenAI 兼容大模型：设置页可管理多套多厂商模型配置（智谱 GLM、DeepSeek、阿里百炼、Moonshot、火山方舟、OpenAI、Ollama 等，含连接测试），「AI 对话」页提供多轮流式对话（逐 token 渲染、思考过程折叠、可中断）。
 
 ## 技术栈
 
@@ -110,9 +110,10 @@ Mr.Huang Agent/
 | 路径 | 页面 | 当前状态 |
 | --- | --- | --- |
 | `/` | 工作台 | 欢迎区 + 4 张占位统计卡片 + 「模块建设中」提示 |
+| `/chat` | AI 对话 | 多轮流式对话（依赖设置页的模型配置；逐 token 渲染、思考过程折叠、可停止） |
 | `/tasks` | 任务中心 | 空状态占位 |
 | `/data` | 数据中心 | 空状态占位 |
-| `/settings` | 设置 | 主题选择（可交互，与顶栏切换联动），其余设置占位 |
+| `/settings` | 设置 | 外观（主题选择，与顶栏切换联动）+ 模型接入（多套模型配置管理、连接测试） |
 
 未匹配路径会重定向回 `/`。
 

@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 
+import ChatView from '@/views/ChatView.vue'
 import DashboardView from '@/views/DashboardView.vue'
 import DataCenterView from '@/views/DataCenterView.vue'
 import SettingsView from '@/views/SettingsView.vue'
@@ -19,6 +20,12 @@ const routes: RouteRecordRaw[] = [
     name: 'dashboard',
     component: DashboardView,
     meta: { title: '工作台' },
+  },
+  {
+    path: '/chat',
+    name: 'chat',
+    component: ChatView,
+    meta: { title: 'AI 对话' },
   },
   {
     path: '/tasks',
