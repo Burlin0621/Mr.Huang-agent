@@ -5,9 +5,11 @@ import { defineConfig, type Plugin } from 'vite'
 
 /**
  * 开发期大模型反向代理：浏览器直连厂商 API 会被 CORS 拦截，
- * 因此 src 内的请求层在开发模式下统一请求同源路径 /llm-proxy/chat/completions，
- * 并通过请求头 x-llm-base-url 携带目标 baseUrl，由该中间件原样转发
- * （含 Authorization、请求体），响应（含 SSE 流）也原封不动回传。
+ * 因此 src 内的请求层在开发模式下统一请求同源路径 /llm-proxy/*，
+ * 并通过请求头 x-llm-base-url 携带目标 baseUrl，由该中间件按剩余路径后缀
+ * 原样转发（/llm-proxy/chat/completions → ${baseUrl}/chat/completions，
+ * /llm-proxy/models → ${baseUrl}/models，任意后缀均可透传），
+ * 含 Authorization、请求体，响应（含 SSE 流）也原封不动回传。
  * 生产模式（后续 Electron 阶段）将改走主进程转发，此处不参与构建。
  */
 const LLM_PROXY_MOUNT = '/llm-proxy'

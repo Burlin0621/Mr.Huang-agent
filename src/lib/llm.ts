@@ -1,9 +1,9 @@
 /**
  * 大模型请求层（OpenAI 兼容 /chat/completions）
  *
- * - 开发模式（Vite dev）：请求同源 /llm-proxy/chat/completions，并通过
+ * - 开发模式（Vite dev）：请求同源 /llm-proxy/*（如 /chat/completions、/models），并通过
  *   x-llm-base-url 请求头携带目标 baseUrl，由 vite.config.ts 中的 dev 中间件
- *   转发到真实厂商接口，规避浏览器 CORS 限制；
+ *   按路径后缀原样转发到真实厂商接口，规避浏览器 CORS 限制；
  * - 生产模式：直接 fetch 厂商地址（后续 Electron 阶段改走主进程转发）。
  *
  * 本模块保持零依赖（不 import 其他 src 模块），便于用 Node 脚本直接做单测。
@@ -497,6 +497,149 @@ export interface ConnectivityResult {
   message: string
   errorKind?: LlmErrorKind
   httpStatus?: number
+}
+
+/* —— 模型列表拉取（GET /models） —— */
+
+/** 拉取模型列表的超时上限（秒）：列表接口应快速返回，失败也不影响手填模型 ID */
+const LIST_MODELS_TIMEOUT_SECONDS = 20
+
+/** listRemoteModels 的入参：仅需 baseUrl / apiKey / timeoutSeconds */
+export type RemoteModelsEndpoint = Pick<LlmEndpoint, 'baseUrl' | 'apiKey' | 'timeoutSeconds'>
+
+export interface RemoteModelsResult {
+  ok: boolean
+  /** 成功：去重并按字母排序后的模型 ID 列表 */
+  models: string[]
+  /** 失败：面向用户的中文错误信息 */
+  message: string
+  errorKind?: LlmErrorKind
+  httpStatus?: number
+}
+
+/** 提取数组元素中指定字段的字符串值（忽略空值/非字符串） */
+function collectModelField(items: unknown[], field: 'id' | 'name'): string[] {
+  const values: string[] = []
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue
+    const value = (item as Record<string, unknown>)[field]
+    if (typeof value === 'string' && value.trim()) {
+      values.push(value.trim())
+    }
+  }
+  return values
+}
+
+function dedupeSorted(values: string[]): string[] {
+  return [...new Set(values)].sort((a, b) => a.localeCompare(b))
+}
+
+/**
+ * 从 /models 响应中提取模型 ID 列表（纯函数，便于直接单测）。
+ * 按序兼容多种形状：{data:[{id}]}（OpenAI 标准）、{models:[{name}]}（Ollama 原生）、
+ * {data:[{name}]}；结果去重并按字母排序；全部无法解析时抛出「响应格式无法识别」。
+ */
+export function extractModelIds(data: unknown): string[] {
+  if (!data || typeof data !== 'object') {
+    throw new LlmError('parse', '响应格式无法识别，未能提取模型列表（期望 {data:[{id}]} 或 {models:[{name}]}）')
+  }
+  const record = data as Record<string, unknown>
+  if (Array.isArray(record.data)) {
+    const ids = collectModelField(record.data, 'id')
+    if (ids.length > 0) return dedupeSorted(ids)
+  }
+  if (Array.isArray(record.models)) {
+    const names = collectModelField(record.models, 'name')
+    if (names.length > 0) return dedupeSorted(names)
+  }
+  if (Array.isArray(record.data)) {
+    const names = collectModelField(record.data, 'name')
+    if (names.length > 0) return dedupeSorted(names)
+  }
+  throw new LlmError('parse', '响应格式无法识别，未能提取模型列表（期望 {data:[{id}]} 或 {models:[{name}]}）')
+}
+
+/** 模型列表场景的 404 提示与对话接口不同：很多兼容服务不提供 /models，应引导手填 */
+function describeModelsError(err: unknown, baseUrl?: string): string {
+  if (err instanceof LlmError && err.kind === 'http' && err.status === 404) {
+    const detail = err.message
+    return `该服务可能不提供模型列表接口（HTTP 404）：请检查 baseUrl 是否正确，或直接手动填写模型 ID${detail ? `；服务端提示：${detail}` : ''}`
+  }
+  return describeLlmError(err, baseUrl)
+}
+
+/**
+ * 调用服务的模型列表接口（GET ${baseUrl}/models，OpenAI 兼容标准端点）。
+ * - apiKey 为空时不带 Authorization（Ollama 本地可匿名）；
+ * - 开发模式同样走 /llm-proxy/models 同源代理；
+ * - 超时使用较短上限（20 秒），失败返回 ok:false 的中文错误，不抛出异常。
+ */
+export async function listRemoteModels(endpoint: RemoteModelsEndpoint): Promise<RemoteModelsResult> {
+  const baseUrl = normalizeBaseUrl(endpoint.baseUrl)
+  if (!baseUrl || !/^https?:\/\//i.test(baseUrl)) {
+    return {
+      ok: false,
+      models: [],
+      message: '接口地址（baseUrl）缺失或不是合法的 http(s) 地址，无法获取模型列表',
+      errorKind: 'invalid',
+    }
+  }
+
+  const headers: Record<string, string> = { accept: 'application/json' }
+  const apiKey = endpoint.apiKey.trim()
+  if (apiKey) {
+    headers.authorization = `Bearer ${apiKey}`
+  }
+  let url: string
+  if (IS_DEV) {
+    headers['x-llm-base-url'] = baseUrl
+    url = `${PROXY_MOUNT}/models`
+  } else {
+    url = `${baseUrl}/models`
+  }
+
+  const timeoutSeconds = Math.min(
+    LIST_MODELS_TIMEOUT_SECONDS,
+    Math.max(1, Math.trunc(endpoint.timeoutSeconds) || LIST_MODELS_TIMEOUT_SECONDS),
+  )
+  const linked = linkAbortSignal(undefined, timeoutSeconds * 1000)
+
+  try {
+    let response: Response
+    try {
+      response = await fetch(url, { method: 'GET', headers, signal: linked.controller.signal })
+    } catch (err) {
+      if (linked.timedOut()) {
+        throw new LlmError('timeout', String(timeoutSeconds))
+      }
+      throw new LlmError('network', errorText(err))
+    }
+
+    if (!response.ok) {
+      const detail = await extractErrorMessage(response)
+      throw new LlmError('http', detail, response.status)
+    }
+
+    let data: unknown
+    try {
+      data = await response.json()
+    } catch (err) {
+      throw new LlmError('parse', `响应不是合法 JSON：${errorText(err)}`)
+    }
+    const models = extractModelIds(data)
+    return { ok: true, models, message: '' }
+  } catch (err) {
+    const llmError = err instanceof LlmError ? err : new LlmError('network', errorText(err))
+    return {
+      ok: false,
+      models: [],
+      message: describeModelsError(llmError, baseUrl),
+      errorKind: llmError.kind,
+      httpStatus: llmError.status,
+    }
+  } finally {
+    linked.dispose()
+  }
 }
 
 /** 连接测试：发一条 messages=[{role:'user',content:'Hi'}] 的非流式请求（不重试，便于快速定位问题） */

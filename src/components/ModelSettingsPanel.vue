@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 
 import {
   CUSTOM_PROVIDER_KEY,
@@ -7,7 +7,12 @@ import {
   getProviderPreset,
   providerLabel,
 } from '@/lib/model-presets'
-import { testLlmConnection, type ConnectivityResult } from '@/lib/llm'
+import {
+  describeLlmError,
+  listRemoteModels,
+  testLlmConnection,
+  type ConnectivityResult,
+} from '@/lib/llm'
 import { createDefaultConfigDraft, useLlmStore, type LlmConfig } from '@/stores/llm'
 
 const llmStore = useLlmStore()
@@ -32,6 +37,7 @@ function startCreate(): void {
   formErrors.value = []
   testResult.value = null
   showApiKey.value = false
+  resetModelPicker()
   isEditing.value = true
 }
 
@@ -41,6 +47,7 @@ function startEdit(config: LlmConfig): void {
   formErrors.value = []
   testResult.value = null
   showApiKey.value = false
+  resetModelPicker()
   isEditing.value = true
 }
 
@@ -112,6 +119,70 @@ function removeConfig(config: LlmConfig): void {
   }
   llmStore.removeConfig(config.id)
 }
+
+/* —— 模型列表在线获取 —— */
+
+const fetchingModels = ref(false)
+/** 已拉取到的模型列表（null 表示尚未获取）；baseUrl / apiKey 变化后失效 */
+const fetchedModels = ref<string[] | null>(null)
+const showModelList = ref(false)
+const modelSearch = ref('')
+const modelFetchError = ref('')
+
+/** baseUrl 为合法 http(s) 地址时才允许获取 */
+const canFetchModels = computed(() => /^https?:\/\//i.test(form.baseUrl.trim()))
+
+const filteredModels = computed<string[]>(() => {
+  const models = fetchedModels.value ?? []
+  const keyword = modelSearch.value.trim().toLowerCase()
+  if (!keyword) return models
+  return models.filter((model) => model.toLowerCase().includes(keyword))
+})
+
+function resetModelPicker(): void {
+  fetchedModels.value = null
+  showModelList.value = false
+  modelSearch.value = ''
+  modelFetchError.value = ''
+}
+
+async function fetchModels(): Promise<void> {
+  if (fetchingModels.value || !canFetchModels.value) return
+  fetchingModels.value = true
+  modelFetchError.value = ''
+  try {
+    const result = await listRemoteModels({
+      baseUrl: form.baseUrl,
+      apiKey: form.apiKey,
+      timeoutSeconds: form.timeoutSeconds,
+    })
+    if (result.ok) {
+      fetchedModels.value = result.models
+      modelSearch.value = ''
+      showModelList.value = true
+    } else {
+      modelFetchError.value = result.message
+    }
+  } catch (err) {
+    modelFetchError.value = describeLlmError(err, form.baseUrl)
+  } finally {
+    fetchingModels.value = false
+  }
+}
+
+/** 选中某个模型：回填到输入框并收起列表（手填能力保留，可随时改） */
+function selectModel(modelId: string): void {
+  form.modelId = modelId
+  showModelList.value = false
+}
+
+/** baseUrl 或 API Key 变化后，缓存失效（含厂商预设切换导致的 baseUrl 变化） */
+watch(
+  () => [form.baseUrl, form.apiKey],
+  () => {
+    resetModelPicker()
+  },
+)
 
 /* —— 连接测试 —— */
 
@@ -258,16 +329,61 @@ async function runTest(): Promise<void> {
           </span>
         </label>
 
-        <label class="field field-wide">
+        <div class="field field-wide">
           <span class="field-label">模型 ID <em>*</em></span>
-          <input
-            v-model.trim="form.modelId"
-            class="field-input"
-            type="text"
-            placeholder="例如：glm-4.6 / deepseek-chat"
-            spellcheck="false"
-          />
-        </label>
+          <span class="model-id-row">
+            <input
+              v-model.trim="form.modelId"
+              class="field-input"
+              type="text"
+              placeholder="例如：glm-4.6 / deepseek-chat"
+              spellcheck="false"
+            />
+            <button
+              class="btn btn-ghost btn-sm"
+              type="button"
+              :disabled="!canFetchModels || fetchingModels"
+              :title="canFetchModels ? '从接口获取可用模型列表' : '请先填写正确的 baseUrl'"
+              @click="fetchModels"
+            >
+              {{ fetchingModels ? '获取中…' : '获取' }}
+            </button>
+          </span>
+          <button
+            v-if="fetchedModels !== null && !showModelList"
+            class="model-reopen"
+            type="button"
+            @click="showModelList = true"
+          >
+            已获取 {{ fetchedModels.length }} 个模型，点击重新选择
+          </button>
+          <div v-if="fetchedModels !== null && showModelList" class="model-picker">
+            <p class="model-picker-head">共 {{ fetchedModels.length }} 个模型，来自接口实时获取</p>
+            <input
+              v-model="modelSearch"
+              class="field-input model-search"
+              type="text"
+              placeholder="搜索模型 ID…"
+              spellcheck="false"
+            />
+            <ul class="model-picker-list">
+              <li v-for="model in filteredModels" :key="model">
+                <button
+                  class="model-option"
+                  :class="{ 'is-selected': model === form.modelId }"
+                  type="button"
+                  @click="selectModel(model)"
+                >
+                  {{ model }}
+                </button>
+              </li>
+              <li v-if="filteredModels.length === 0" class="model-picker-empty">
+                没有匹配「{{ modelSearch }}」的模型，可调整关键词或直接手动填写
+              </li>
+            </ul>
+          </div>
+          <p v-if="modelFetchError" class="model-fetch-error">{{ modelFetchError }}</p>
+        </div>
 
         <label class="field">
           <span class="field-label">温度（0 - 2）</span>
@@ -533,6 +649,108 @@ async function runTest(): Promise<void> {
 
 .api-key-row .field-input {
   flex: 1;
+}
+
+/* —— 模型 ID 在线获取 —— */
+.model-id-row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.model-id-row .field-input {
+  flex: 1;
+}
+
+.model-reopen {
+  align-self: flex-start;
+  padding: 0;
+  margin-top: var(--space-1);
+  border: none;
+  background: none;
+  color: var(--color-brand);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.model-reopen:hover {
+  text-decoration: underline;
+}
+
+.model-picker {
+  margin-top: var(--space-1);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.model-picker-head {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.model-search {
+  height: 34px;
+  border: none;
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.model-search:focus {
+  border-color: var(--color-border-strong);
+}
+
+.model-picker-list {
+  margin: 0;
+  padding: var(--space-1);
+  max-height: 220px;
+  overflow-y: auto;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.model-option {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.model-option:hover {
+  background: var(--color-surface-muted);
+}
+
+.model-option.is-selected {
+  background: var(--color-brand-soft);
+  color: var(--color-brand);
+}
+
+.model-picker-empty {
+  padding: var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.model-fetch-error {
+  margin-top: var(--space-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-danger);
+  word-break: break-all;
 }
 
 .form-errors {
