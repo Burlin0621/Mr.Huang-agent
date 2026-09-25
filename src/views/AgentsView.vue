@@ -6,6 +6,7 @@ import { DEFAULT_AGENT_ID } from '@/lib/agents'
 import {
   fetchSkillFromGithub,
   getGithubToken,
+  parseSkillZip,
   setGithubToken,
   SKILLHUB_AGENTS,
   type SkillhubAgentDefinition,
@@ -331,6 +332,54 @@ async function installFromGithub(): Promise<void> {
   }
 }
 
+/* —— SkillHub 弹窗：上传 ZIP 技能包导入（纯本地解析，无需 Token） —— */
+
+/** 隐藏的文件选择框引用 */
+const zipFileInput = ref<HTMLInputElement | null>(null)
+/** ZIP 解析中（按钮禁用并显示「解析中…」） */
+const zipParsing = ref(false)
+
+/** 触发隐藏的文件选择框 */
+function pickZipFile(): void {
+  if (zipParsing.value) return
+  zipFileInput.value?.click()
+}
+
+/** 选中 ZIP 后本地解析 → 查重 → 添加为自定义智能体；无论成败都清空 input 以便重选同名文件 */
+async function onZipFileChange(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  if (zipParsing.value) {
+    input.value = ''
+    return
+  }
+  zipParsing.value = true
+  setGhStatus('loading', '正在解析 ZIP 技能包…')
+  try {
+    const skill = await parseSkillZip(file)
+    const skillhubId = `zip:${skill.skillDir}`
+    if (agentsStore.isSkillhubAdded(skillhubId)) {
+      setGhStatus('warn', '该技能已安装为智能体')
+      return
+    }
+    agentsStore.addCustomAgent({
+      name: skill.name,
+      description: skill.description,
+      systemPrompt: skill.systemPrompt,
+      icon: '📦',
+      tags: ['SkillHub'],
+      skillhubId,
+    })
+    setGhStatus('success', `已导入为智能体：${skill.name}`)
+  } catch (error) {
+    setGhStatus('error', error instanceof Error ? error.message : '导入失败，请稍后再试')
+  } finally {
+    zipParsing.value = false
+    input.value = ''
+  }
+}
+
 /** 保存 Token 到本机（仅 localStorage），成功后面板切换为「已配置」态 */
 function saveGhToken(): void {
   if (!ghTokenInput.value.trim()) return
@@ -498,6 +547,20 @@ function clearGhToken(): void {
                 @click="installFromGithub"
               >
                 {{ ghInstalling ? '安装中…' : '安装' }}
+              </button>
+              <!-- 上传 ZIP 技能包：纯本地解析，与链接安装共用状态行 -->
+              <input
+                ref="zipFileInput"
+                class="zip-file-input"
+                type="file"
+                accept=".zip"
+                aria-hidden="true"
+                tabindex="-1"
+                @change="onZipFileChange"
+              />
+              <button class="btn btn-ghost" type="button" :disabled="zipParsing" @click="pickZipFile">
+                <AppIcon name="upload" />
+                {{ zipParsing ? '解析中…' : '上传 ZIP' }}
               </button>
             </div>
 
@@ -1140,6 +1203,11 @@ function clearGhToken(): void {
 .gh-install-search {
   flex: 1;
   max-width: none;
+}
+
+/* 隐藏的 ZIP 文件选择框（点击「上传 ZIP」按钮触发） */
+.zip-file-input {
+  display: none;
 }
 
 /* 安装状态文字：加载 / 成功 / 重复（警示） / 失败 */

@@ -152,13 +152,17 @@ export interface ParsedGithubSkillUrl {
   kind: 'file' | 'dir' | 'root'
 }
 
-/** 从 GitHub 拉取并解析后的技能定义（可直接作为自定义智能体入参） */
-export interface GithubSkill {
+/** 从技能包（GitHub 链接 / ZIP 文件）解析出的技能定义（可直接作为自定义智能体入参） */
+export interface InstalledSkillLike {
   name: string
   description: string
   systemPrompt: string
-  /** 技能目录名（SKILL.md 所在目录；仓库根时为仓库名） */
+  /** 技能目录名（SKILL.md 所在目录；仓库根 / 压缩包根级时回退来源名） */
   skillDir: string
+}
+
+/** 从 GitHub 拉取并解析后的技能定义 */
+export interface GithubSkill extends InstalledSkillLike {
   owner: string
   repo: string
 }
@@ -459,23 +463,192 @@ export async function fetchSkillFromGithub(url: string, token?: string): Promise
   }
 
   const raw = await fetchSkillMdContent(owner, repo, skillMdPath, branch, token)
-  const { name, description, body } = parseFrontmatter(raw)
-  if (!body) throw new Error('SKILL.md 没有正文内容')
-
   // 技能目录名：SKILL.md 的上一级目录；仓库根时回退仓库名
   const pathSegments = skillMdPath.split('/')
   const skillDir = pathSegments.length >= 2 ? pathSegments[pathSegments.length - 2] : repo
-  const displayName = name || skillDir
+  const { name, description, systemPrompt } = parseSkillMd(raw, skillDir)
+  return { name, description, systemPrompt, skillDir, owner, repo }
+}
+
+/**
+ * SKILL.md 文本 → 智能体定义（GitHub 链接与 ZIP 上传两条安装路径共享同一份解析）：
+ * frontmatter 提取 name / description（描述回退文案、超长 60 字截断）、
+ * 正文为空时报错、正文末尾统一追加中文回答约束。
+ */
+function parseSkillMd(
+  text: string,
+  fallbackName: string,
+  fallbackDescription = '从 GitHub 安装的技能智能体',
+): { name: string; description: string; systemPrompt: string } {
+  const { name, description, body } = parseFrontmatter(text)
+  if (!body) throw new Error('SKILL.md 没有正文内容')
+
   const displayDescription = description
     ? description.length > MAX_DESCRIPTION_LENGTH
       ? `${description.slice(0, MAX_DESCRIPTION_LENGTH)}…`
       : description
-    : '从 GitHub 安装的技能智能体'
+    : fallbackDescription
 
   // 正文末尾若无中文回答约束则统一追加
-  const systemPrompt = /用中文回答/.test(body)
-    ? body
-    : `${body}\n\n除非用户另行要求，一律用中文回答。`
+  const systemPrompt = /用中文回答/.test(body) ? body : `${body}\n\n除非用户另行要求，一律用中文回答。`
+  return { name: name || fallbackName, description: displayDescription, systemPrompt }
+}
 
-  return { name: displayName, description: displayDescription, systemPrompt, skillDir, owner, repo }
+/* ==========================================================================
+   ZIP 技能包上传安装：本地解析技能目录压缩包（内含 SKILL.md），装成智能体
+   --------------------------------------------------------------------------
+   - 不引入任何依赖，用浏览器原生能力手写 ZIP 解析：尾部回扫 EOCD → 遍历中央
+     目录 → 按本地文件头切数据；deflate 用 DecompressionStream('deflate-raw')
+     流式解压（Chromium 103+ 原生支持，无需 polyfill）
+   - SKILL.md 解析与 GitHub 链接安装完全一致（同一 parseSkillMd）
+   ========================================================================== */
+
+/** ZIP 文件大小上限（10MB），超限拒绝解析 */
+const MAX_ZIP_BYTES = 10 * 1024 * 1024
+/** EOCD（目录结束记录）签名，小端读出为 0x06054b50 */
+const ZIP_EOCD_SIGNATURE = 0x06054b50
+/** 中央目录文件头签名，小端读出为 0x02014b50 */
+const ZIP_CENTRAL_SIGNATURE = 0x02014b50
+/** 本地文件头签名，小端读出为 0x04034b50 */
+const ZIP_LOCAL_SIGNATURE = 0x04034b50
+/** 中央目录文件头的固定长度（46 字节） */
+const ZIP_CENTRAL_HEADER_SIZE = 46
+/** 本地文件头的固定长度（30 字节） */
+const ZIP_LOCAL_HEADER_SIZE = 30
+
+/** 中央目录中的单个条目（仅提取解析 SKILL.md 所需字段） */
+interface ZipEntry {
+  /** 完整路径名（目录项已过滤） */
+  name: string
+  /** 压缩方式：0 = store（原样存储），8 = deflate */
+  method: number
+  /** 压缩后字节数 */
+  compressedSize: number
+  /** 本地文件头在 ZIP 中的字节偏移 */
+  localOffset: number
+}
+
+/** 压缩包文件名 → 安全的技能目录名（去 .zip 后缀，仅保留文字/数字/连字符/下划线） */
+function sanitizeZipBaseName(fileName: string): string {
+  const safe = fileName
+    .replace(/\.zip$/i, '')
+    .trim()
+    .replace(/[^\p{L}\p{N}_-]+/gu, '-')
+  return safe || '未命名技能'
+}
+
+/**
+ * 解析 ZIP 技能包（技能目录打包，内含 SKILL.md）为智能体定义：
+ * 1. 尾部回扫 EOCD（最多回扫 64KB+22，兼容注释尾）→ 读中央目录偏移与条目数
+ * 2. 遍历中央目录条目：跳过目录项 / __MACOSX/ 噪音 / 隐藏文件；拒绝加密与 Zip64
+ * 3. 定位 SKILL.md：优先根级，否则取路径深度最浅的子目录内 SKILL.md
+ * 4. 按本地文件头（30 字节 + 文件名 + 扩展字段）切出压缩数据并解压
+ * 5. UTF-8 解码后走与 GitHub 安装一致的 parseSkillMd；错误统一抛中文信息
+ */
+export async function parseSkillZip(file: File): Promise<InstalledSkillLike> {
+  const buffer = await file.arrayBuffer()
+  if (buffer.byteLength > MAX_ZIP_BYTES) {
+    throw new Error('ZIP 文件过大（超过 10MB），暂不支持')
+  }
+  const bytes = new Uint8Array(buffer)
+  const view = new DataView(buffer)
+
+  // EOCD 固定 22 字节、尾部注释最长 65535 字节：从尾部向前扫描签名
+  const eocdFloor = Math.max(0, bytes.length - 22 - 0xffff)
+  let eocdOffset = -1
+  for (let offset = bytes.length - 22; offset >= eocdFloor; offset -= 1) {
+    if (view.getUint32(offset, true) === ZIP_EOCD_SIGNATURE) {
+      eocdOffset = offset
+      break
+    }
+  }
+  if (eocdOffset === -1) {
+    throw new Error('ZIP 文件无效或已损坏：未找到目录结束记录，请重新打包技能目录后重试')
+  }
+  const entryCount = view.getUint16(eocdOffset + 10, true)
+  const centralOffset = view.getUint32(eocdOffset + 16, true)
+  if (entryCount === 0xffff || centralOffset === 0xffffffff) {
+    throw new Error('暂不支持 Zip64 格式的 ZIP 文件，请用标准方式重新打包')
+  }
+
+  // 遍历中央目录条目（签名校验防越界错位）
+  const entries: ZipEntry[] = []
+  let cursor = centralOffset
+  for (let index = 0; index < entryCount; index += 1) {
+    if (cursor + ZIP_CENTRAL_HEADER_SIZE > bytes.length || view.getUint32(cursor, true) !== ZIP_CENTRAL_SIGNATURE) {
+      throw new Error('ZIP 文件无效或已损坏：中央目录读取失败，请重新打包技能目录后重试')
+    }
+    const flags = view.getUint16(cursor + 8, true)
+    if ((flags & 0x0001) !== 0) {
+      throw new Error('不支持的加密 ZIP，请上传未加密的 ZIP 文件')
+    }
+    const method = view.getUint16(cursor + 10, true)
+    const compressedSize = view.getUint32(cursor + 20, true)
+    const nameLength = view.getUint16(cursor + 28, true)
+    const extraLength = view.getUint16(cursor + 30, true)
+    const commentLength = view.getUint16(cursor + 32, true)
+    const localOffset = view.getUint32(cursor + 42, true)
+    // flag bit 11 置位时文件名为 UTF-8；未置位按单字节编码回退（ASCII 文件名两者一致）
+    const name = new TextDecoder((flags & 0x0800) !== 0 ? 'utf-8' : 'iso-8859-1').decode(
+      bytes.subarray(cursor + ZIP_CENTRAL_HEADER_SIZE, cursor + ZIP_CENTRAL_HEADER_SIZE + nameLength),
+    )
+    cursor += ZIP_CENTRAL_HEADER_SIZE + nameLength + extraLength + commentLength
+
+    if (name.endsWith('/') || name === '__MACOSX' || name.startsWith('__MACOSX/')) continue // 目录项与 macOS 打包噪音
+    if (name.split('/').some((segment) => segment.startsWith('.'))) continue // 隐藏文件（.DS_Store 等）
+    entries.push({ name, method, compressedSize, localOffset })
+  }
+
+  // 定位 SKILL.md：优先根级；否则取路径深度最浅的 */SKILL.md
+  let target = entries.find((entry) => entry.name === 'SKILL.md')
+  if (!target) {
+    const nested = entries
+      .filter((entry) => entry.name.endsWith('/SKILL.md'))
+      .sort((a, b) => a.name.split('/').length - b.name.split('/').length)
+    target = nested[0]
+  }
+  if (!target) {
+    throw new Error('ZIP 中未找到 SKILL.md（技能包应包含 SKILL.md 文件）')
+  }
+
+  // 按本地文件头定位数据区：固定 30 字节 + 文件名 + 扩展字段之后才是压缩数据
+  const localOffset = target.localOffset
+  if (
+    localOffset + ZIP_LOCAL_HEADER_SIZE > bytes.length ||
+    view.getUint32(localOffset, true) !== ZIP_LOCAL_SIGNATURE
+  ) {
+    throw new Error('ZIP 文件无效或已损坏：本地文件头读取失败，请重新打包技能目录后重试')
+  }
+  const localNameLength = view.getUint16(localOffset + 26, true)
+  const localExtraLength = view.getUint16(localOffset + 28, true)
+  const dataStart = localOffset + ZIP_LOCAL_HEADER_SIZE + localNameLength + localExtraLength
+  const compressed = bytes.subarray(dataStart, dataStart + target.compressedSize)
+
+  let plain: Uint8Array
+  if (target.method === 8) {
+    // deflate：原生 DecompressionStream('deflate-raw') 流式解压
+    const stream = new Blob([compressed])
+      .stream()
+      .pipeThrough(new DecompressionStream('deflate-raw'))
+    plain = new Uint8Array(await new Response(stream).arrayBuffer())
+  } else if (target.method === 0) {
+    // store：数据原样存储，直接使用
+    plain = compressed
+  } else {
+    throw new Error('不支持的压缩方式（仅支持 store / deflate 的 ZIP）')
+  }
+  if (plain.byteLength > MAX_SKILL_MD_BYTES) {
+    throw new Error('SKILL.md 过大（超过 100KB），暂不支持')
+  }
+
+  // 技能目录名：SKILL.md 的上一级目录；根级时回退压缩包文件名（仅取安全字符）
+  const segments = target.name.split('/')
+  const skillDir =
+    segments.length >= 2 ? segments[segments.length - 2] : sanitizeZipBaseName(file.name)
+  const { name, description, systemPrompt } = parseSkillMd(
+    new TextDecoder('utf-8').decode(plain),
+    skillDir,
+    '从 ZIP 导入的技能智能体',
+  )
+  return { name, description, systemPrompt, skillDir }
 }

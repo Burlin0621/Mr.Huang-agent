@@ -19,6 +19,7 @@ type IconName =
   | 'chevron-down'
   | 'close'
   | 'download'
+  | 'upload'
   | 'copy'
   | 'trash'
   | 'search'
@@ -110,6 +111,9 @@ defineProps<{ name: IconName }>()
     </template>
     <template v-else-if="name === 'download'">
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+    </template>
+    <template v-else-if="name === 'upload'">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
     </template>
     <template v-else-if="name === 'copy'">
       <rect x="9" y="9" width="13" height="13" rx="2" />
