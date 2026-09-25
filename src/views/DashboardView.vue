@@ -5,21 +5,21 @@ const today = new Intl.DateTimeFormat('zh-CN', {
   year: 'numeric',
   month: 'long',
   day: 'numeric',
-  weekday: 'long'
+  weekday: 'long',
 }).format(new Date())
 
 const stats = [
   { label: '今日任务', value: '0', note: '任务模块建设中' },
   { label: '已完成', value: '0', note: '暂无统计数据' },
   { label: '接入数据源', value: '0', note: '数据中心建设中' },
-  { label: '活跃模块', value: '0', note: '敬请期待' }
+  { label: '活跃模块', value: '0', note: '敬请期待' },
 ]
 
 const modules = [
   { name: '任务编排', desc: '按流程串联提示词、工具与数据源，自动执行多步任务', stage: '建设中' },
   { name: '数据接入', desc: '统一管理数据源、同步任务与访问凭据', stage: '规划中' },
   { name: '提示词库', desc: '沉淀并复用高质量提示词模板', stage: '规划中' },
-  { name: '权限与成员', desc: '多角色协作与操作审计', stage: '规划中' }
+  { name: '权限与成员', desc: '多角色协作与操作审计', stage: '规划中' },
 ]
 </script>
 

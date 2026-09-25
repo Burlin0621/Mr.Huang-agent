@@ -7,10 +7,13 @@ import type { ThemePreference } from '@/stores/theme'
 
 const themeStore = useThemeStore()
 
-const META: Record<ThemePreference, { label: string; icon: 'monitor' | 'sun' | 'moon'; hint: string }> = {
+const META: Record<
+  ThemePreference,
+  { label: string; icon: 'monitor' | 'sun' | 'moon'; hint: string }
+> = {
   system: { label: '跟随系统', icon: 'monitor', hint: '当前：跟随系统，点击切换为浅色' },
   light: { label: '浅色', icon: 'sun', hint: '当前：浅色，点击切换为深色' },
-  dark: { label: '深色', icon: 'moon', hint: '当前：深色，点击切换为跟随系统' }
+  dark: { label: '深色', icon: 'moon', hint: '当前：深色，点击切换为跟随系统' },
 }
 
 const current = computed(() => META[themeStore.preference])

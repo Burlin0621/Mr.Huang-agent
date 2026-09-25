@@ -7,3 +7,8 @@ Thumbs.db
 npm-debug.log*
 *.log
 .idea/
+
+# VS Code：仅忽略个人配置，共享配置入库
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json

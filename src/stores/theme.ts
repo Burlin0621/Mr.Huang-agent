@@ -13,7 +13,7 @@ const STORAGE_KEY = 'mr-huang-agent:theme'
 const CYCLE: Record<ThemePreference, ThemePreference> = {
   system: 'light',
   light: 'dark',
-  dark: 'system'
+  dark: 'system',
 }
 
 const systemMedia = window.matchMedia('(prefers-color-scheme: dark)')
@@ -39,7 +39,7 @@ export const useThemeStore = defineStore('theme', () => {
 
   /** 计算最终主题：手动选择时覆盖系统偏好，否则跟随系统 */
   const resolvedTheme = computed<ResolvedTheme>(() =>
-    preference.value === 'system' ? (systemDark.value ? 'dark' : 'light') : preference.value
+    preference.value === 'system' ? (systemDark.value ? 'dark' : 'light') : preference.value,
   )
 
   function setPreference(next: ThemePreference): void {

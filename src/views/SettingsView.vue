@@ -19,10 +19,10 @@ const themeOptions: ThemeOption[] = [
     value: 'system',
     label: '跟随系统',
     description: '自动匹配操作系统的深浅色外观，并随系统变化实时切换',
-    icon: 'monitor'
+    icon: 'monitor',
   },
   { value: 'light', label: '浅色模式', description: '始终使用浅色主题', icon: 'sun' },
-  { value: 'dark', label: '深色模式', description: '始终使用深色主题', icon: 'moon' }
+  { value: 'dark', label: '深色模式', description: '始终使用深色主题', icon: 'moon' },
 ]
 
 const resolvedLabel = computed(() => (themeStore.resolvedTheme === 'dark' ? '深色' : '浅色'))
@@ -39,7 +39,9 @@ const systemLabel = computed(() => (themeStore.systemDark ? '深色' : '浅色')
     <section class="card" aria-labelledby="appearance-title">
       <header class="section-head">
         <h2 id="appearance-title">外观</h2>
-        <p>选择主题模式后即时生效；顶栏的主题切换按钮与此处联动（三态循环：跟随系统 → 浅色 → 深色）。</p>
+        <p>
+          选择主题模式后即时生效；顶栏的主题切换按钮与此处联动（三态循环：跟随系统 → 浅色 → 深色）。
+        </p>
       </header>
 
       <div class="theme-options" role="radiogroup" aria-label="主题模式">
@@ -67,7 +69,10 @@ const systemLabel = computed(() => (themeStore.systemDark ? '深色' : '浅色')
       </div>
 
       <p class="theme-hint">
-        当前生效：<strong>{{ resolvedLabel }}</strong>主题<template v-if="themeStore.preference === 'system'">（跟随系统，系统当前为{{ systemLabel }}）</template>。
+        当前生效：<strong>{{ resolvedLabel }}</strong
+        >主题<template v-if="themeStore.preference === 'system'"
+          >（跟随系统，系统当前为{{ systemLabel }}）</template
+        >。
       </p>
     </section>
 

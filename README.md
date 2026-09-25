@@ -1,7 +1,15 @@
 # Mr.Huang Agent · 工作台前端
 
+[![CI](https://github.com/YOUR_USERNAME/mr-huang-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/mr-huang-agent/actions)
+
 > 名称来自项目目录「Mr.Huang Agent」，界面文案全部为中文。
 > 当前为 **工程骨架版本（v0.1.0）**：整体布局、导航、路由、响应式与主题系统已就绪，业务功能模块以占位形式呈现，后续迭代再接入。未接入任何真实数据或 mock API。
+
+> 徽章中的 `YOUR_USERNAME` 需替换为你的 GitHub 用户名（见文末「推送到 GitHub」）。
+
+## 项目简介
+
+Mr.Huang Agent 工作台前端是一个基于 Vue 3 + Vite + TypeScript 的中后台工程骨架，内置布局、导航、路由、响应式与明暗主题系统，可作为后续业务模块迭代的基础。工程化配置（ESLint / Prettier / EditorConfig / GitHub Actions CI）已就绪，可直接推送至 GitHub 协作开发。
 
 ## 技术栈
 
@@ -12,6 +20,8 @@
 | 路由 | Vue Router（history 模式） |
 | 状态 | Pinia |
 | 样式 | 自定义 CSS 设计令牌（CSS 变量），不使用任何 UI 组件库与 Tailwind |
+| 代码规范 | ESLint（flat config，TS + Vue）+ Prettier + EditorConfig |
+| CI | GitHub Actions（push / PR 到 main 时执行 lint + build） |
 
 ## 快速开始
 
@@ -32,6 +42,19 @@ npm run preview
 npm run verify:dev
 ```
 
+## 开发命令
+
+| 命令 | 说明 |
+| --- | --- |
+| `npm install` | 安装依赖 |
+| `npm run dev` | 启动开发服务器（默认 http://localhost:5173） |
+| `npm run build` | 类型检查（vue-tsc）+ 生产构建（输出到 dist/） |
+| `npm run preview` | 本地预览生产构建 |
+| `npm run lint` | ESLint 检查（要求 0 error 0 warning） |
+| `npm run lint:fix` | ESLint 检查并自动修复可修复问题 |
+| `npm run format` | Prettier 格式化 `src` 下 `.ts` / `.vue` / `.css` |
+| `npm run verify:dev` | 校验开发服务器返回 200 且包含应用挂载点 |
+
 ## 目录结构
 
 ```
@@ -40,6 +63,12 @@ Mr.Huang Agent/
 ├─ package.json
 ├─ vite.config.ts              # Vite 配置（@ 别名指向 src）
 ├─ tsconfig.json
+├─ eslint.config.js            # ESLint flat config（TypeScript + Vue）
+├─ .prettierrc                 # Prettier 配置
+├─ .prettierignore             # Prettier 忽略清单
+├─ .editorconfig               # 编辑器基础格式统一
+├─ .vscode/                    # 推荐插件与「保存即格式化 / ESLint 校验」配置
+├─ .github/workflows/ci.yml    # GitHub Actions：push/PR 到 main 执行 lint + build
 ├─ README.md
 ├─ scripts/
 │  └─ verify-dev.mjs           # dev server 自检脚本（200 + 挂载点）
@@ -101,4 +130,18 @@ Mr.Huang Agent/
 - 组件一律使用组合式 API 与 TypeScript；
 - 颜色、间距等一律引用 `src/styles/tokens.css` 中的令牌，禁止在组件里写死颜色值；
 - 全局通用样式（页面容器、卡片、按钮、徽标、图标按钮）位于 `src/styles/base.css`；
-- 图标为内置 SVG 组件（`src/components/AppIcon.vue`），不依赖第三方图标库。
+- 图标为内置 SVG 组件（`src/components/AppIcon.vue`），不依赖第三方图标库；
+- 提交前请确保 `npm run lint`（0 error 0 warning）与 `npm run build` 通过，提交信息遵循 Conventional Commits（`feat:` / `fix:` / `chore:` 等）。
+
+## 推送到 GitHub
+
+1. 在 GitHub 上新建一个**空仓库**（不要勾选初始化 README / .gitignore / LICENSE），名称建议为 `mr-huang-agent`；
+2. 本地仓库已初始化在 `main` 分支并包含 `v0.1.0` 标签，关联远程后推送即可：
+
+   ```bash
+   git remote add origin https://github.com/YOUR_USERNAME/mr-huang-agent.git
+   git push -u origin main --tags
+   ```
+
+3. 推送后 `.github/workflows/ci.yml` 会在 GitHub Actions 自动执行依赖安装、lint 与 build；
+4. 别忘了把 README 顶部 CI 徽章中的 `YOUR_USERNAME` 替换为你的 GitHub 用户名。

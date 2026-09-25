@@ -18,37 +18,37 @@ const routes: RouteRecordRaw[] = [
     path: '/',
     name: 'dashboard',
     component: DashboardView,
-    meta: { title: '工作台' }
+    meta: { title: '工作台' },
   },
   {
     path: '/tasks',
     name: 'tasks',
     component: TasksView,
-    meta: { title: '任务中心' }
+    meta: { title: '任务中心' },
   },
   {
     path: '/data',
     name: 'data-center',
     component: DataCenterView,
-    meta: { title: '数据中心' }
+    meta: { title: '数据中心' },
   },
   {
     path: '/settings',
     name: 'settings',
     component: SettingsView,
-    meta: { title: '设置' }
+    meta: { title: '设置' },
   },
   {
     path: '/:pathMatch(.*)*',
     name: 'not-found',
-    redirect: '/'
-  }
+    redirect: '/',
+  },
 ]
 
 const router = createRouter({
   history: createWebHistory(),
   routes,
-  scrollBehavior: () => ({ top: 0 })
+  scrollBehavior: () => ({ top: 0 }),
 })
 
 router.afterEach((to) => {

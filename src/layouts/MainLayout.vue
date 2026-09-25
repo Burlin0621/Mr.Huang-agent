@@ -23,7 +23,7 @@ const navItems: NavItem[] = [
   { to: '/', label: '工作台', icon: 'dashboard' },
   { to: '/tasks', label: '任务中心', icon: 'tasks' },
   { to: '/data', label: '数据中心', icon: 'data' },
-  { to: '/settings', label: '设置', icon: 'settings' }
+  { to: '/settings', label: '设置', icon: 'settings' },
 ]
 
 // 切换路由后自动关闭窄屏抽屉
@@ -31,7 +31,7 @@ watch(
   () => route.fullPath,
   () => {
     drawerOpen.value = false
-  }
+  },
 )
 </script>
 
@@ -92,7 +92,7 @@ watch(
         </div>
       </header>
 
-      <main class="app-content" id="main-content">
+      <main id="main-content" class="app-content">
         <RouterView />
       </main>
     </div>

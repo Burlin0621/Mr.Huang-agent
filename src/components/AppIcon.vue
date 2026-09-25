@@ -1,14 +1,6 @@
 <script setup lang="ts">
 type IconName =
-  | 'dashboard'
-  | 'tasks'
-  | 'data'
-  | 'settings'
-  | 'menu'
-  | 'sun'
-  | 'moon'
-  | 'monitor'
-  | 'plus'
+  'dashboard' | 'tasks' | 'data' | 'settings' | 'menu' | 'sun' | 'moon' | 'monitor' | 'plus'
 
 defineProps<{ name: IconName }>()
 </script>

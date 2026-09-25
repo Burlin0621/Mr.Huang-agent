@@ -11,7 +11,10 @@ import EmptyState from '@/components/EmptyState.vue'
     </header>
 
     <section class="card" aria-label="数据源列表（占位）">
-      <EmptyState title="暂无数据源" description="数据中心模块建设中，开放后可在这里接入与管理数据源。">
+      <EmptyState
+        title="暂无数据源"
+        description="数据中心模块建设中，开放后可在这里接入与管理数据源。"
+      >
         <button class="btn btn-primary" type="button" disabled>
           <AppIcon name="data" />
           接入数据源（即将开放）
