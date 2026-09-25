@@ -3,7 +3,13 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { DEFAULT_AGENT_ID } from '@/lib/agents'
-import { SKILLHUB_AGENTS, type SkillhubAgentDefinition } from '@/lib/skillhub'
+import {
+  fetchSkillFromGithub,
+  getGithubToken,
+  setGithubToken,
+  SKILLHUB_AGENTS,
+  type SkillhubAgentDefinition,
+} from '@/lib/skillhub'
 import { useAgentsStore, type AgentView } from '@/stores/agents'
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -70,6 +76,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', onDocumentPointerDown)
   document.removeEventListener('keydown', onDocumentKeydown)
+  clearGhStatus()
 })
 
 /* —— 行操作 —— */
@@ -231,6 +238,10 @@ const filteredSkillhubAgents = computed<SkillhubAgentDefinition[]>(() => {
 
 function openSkillhubModal(): void {
   skillhubKeyword.value = ''
+  ghUrl.value = ''
+  ghInstalling.value = false
+  ghTokenOpen.value = false
+  clearGhStatus()
   skillhubOpen.value = true
 }
 
@@ -249,6 +260,89 @@ function addSkillhubAgent(skill: SkillhubAgentDefinition): void {
     tags: [...skill.tags],
     skillhubId: skill.id,
   })
+}
+
+/* —— SkillHub 弹窗：粘贴 GitHub 链接安装技能 —— */
+
+/** 安装状态文字的语义（决定状态区配色） */
+type GhInstallStatusKind = 'loading' | 'success' | 'warn' | 'error'
+
+const ghUrl = ref('')
+const ghInstalling = ref(false)
+const ghStatusText = ref('')
+const ghStatusKind = ref<GhInstallStatusKind>('loading')
+/** 状态文字自动清除定时器（成功提示 2.5s 后消失） */
+let ghStatusTimer: number | undefined
+/** 私有仓库 Token 设置面板展开状态 */
+const ghTokenOpen = ref(false)
+const ghTokenInput = ref('')
+/** 本机是否已保存 GitHub Token（用于面板在「输入保存」与「已配置」两态间切换） */
+const ghHasToken = ref(getGithubToken() !== '')
+
+/** 清除安装状态文字与自动清除定时器 */
+function clearGhStatus(): void {
+  if (ghStatusTimer !== undefined) {
+    window.clearTimeout(ghStatusTimer)
+    ghStatusTimer = undefined
+  }
+  ghStatusText.value = ''
+}
+
+/** 更新安装状态文字；仅成功状态 2.5s 后自动清除 */
+function setGhStatus(kind: GhInstallStatusKind, text: string): void {
+  clearGhStatus()
+  ghStatusKind.value = kind
+  ghStatusText.value = text
+  if (kind === 'success') {
+    ghStatusTimer = window.setTimeout(() => {
+      ghStatusText.value = ''
+      ghStatusTimer = undefined
+    }, 2500)
+  }
+}
+
+/** 粘贴链接安装：拉取 SKILL.md → 查重 → 添加为自定义智能体；失败保留输入便于重试 */
+async function installFromGithub(): Promise<void> {
+  const url = ghUrl.value.trim()
+  if (!url || ghInstalling.value) return
+  ghInstalling.value = true
+  setGhStatus('loading', '正在从 GitHub 拉取技能…')
+  try {
+    const skill = await fetchSkillFromGithub(url, getGithubToken() || undefined)
+    const skillhubId = `gh:${skill.owner}/${skill.repo}/${skill.skillDir}`
+    if (agentsStore.isSkillhubAdded(skillhubId)) {
+      setGhStatus('warn', '该技能已安装为智能体')
+      return
+    }
+    agentsStore.addCustomAgent({
+      name: skill.name,
+      description: skill.description,
+      systemPrompt: skill.systemPrompt,
+      icon: '🧩',
+      tags: ['SkillHub'],
+      skillhubId,
+    })
+    ghUrl.value = ''
+    setGhStatus('success', `已安装为智能体：${skill.name}`)
+  } catch (error) {
+    setGhStatus('error', error instanceof Error ? error.message : '安装失败，请稍后再试')
+  } finally {
+    ghInstalling.value = false
+  }
+}
+
+/** 保存 Token 到本机（仅 localStorage），成功后面板切换为「已配置」态 */
+function saveGhToken(): void {
+  if (!ghTokenInput.value.trim()) return
+  setGithubToken(ghTokenInput.value)
+  ghTokenInput.value = ''
+  ghHasToken.value = getGithubToken() !== ''
+}
+
+/** 清除本机保存的 Token */
+function clearGhToken(): void {
+  setGithubToken('')
+  ghHasToken.value = false
 }
 </script>
 
@@ -383,6 +477,71 @@ function addSkillhubAgent(skill: SkillhubAgentDefinition): void {
         </header>
 
         <div class="skillhub-body">
+          <!-- 粘贴 GitHub 链接安装：技能目录或 SKILL.md 链接均可 -->
+          <div class="gh-install">
+            <div class="gh-install-row">
+              <div class="search-box gh-install-search">
+                <AppIcon name="download" />
+                <input
+                  v-model="ghUrl"
+                  class="search-input"
+                  type="text"
+                  placeholder="粘贴 GitHub 技能链接（技能目录或 SKILL.md）"
+                  :disabled="ghInstalling"
+                  @keydown.enter.prevent="installFromGithub"
+                />
+              </div>
+              <button
+                class="btn btn-primary"
+                type="button"
+                :disabled="ghInstalling || !ghUrl.trim()"
+                @click="installFromGithub"
+              >
+                {{ ghInstalling ? '安装中…' : '安装' }}
+              </button>
+            </div>
+
+            <p v-if="ghStatusText" class="gh-status" :class="`is-${ghStatusKind}`" role="status">
+              {{ ghStatusText }}
+            </p>
+
+            <!-- 私有仓库设置：GitHub Token 仅存本机 localStorage -->
+            <div class="gh-token">
+              <button class="gh-token-toggle" type="button" @click="ghTokenOpen = !ghTokenOpen">
+                {{ ghTokenOpen ? '收起私有仓库设置' : '私有仓库设置' }}
+              </button>
+              <div v-if="ghTokenOpen" class="gh-token-panel">
+                <template v-if="ghHasToken">
+                  <div class="gh-token-row">
+                    <span class="gh-token-status">已配置 Token</span>
+                    <button class="btn btn-ghost btn-sm" type="button" @click="clearGhToken">
+                      清除
+                    </button>
+                  </div>
+                </template>
+                <template v-else>
+                  <div class="gh-token-row">
+                    <input
+                      v-model="ghTokenInput"
+                      class="field-input gh-token-input"
+                      type="password"
+                      placeholder="GitHub Personal Access Token（仅存本机）"
+                    />
+                    <button
+                      class="btn btn-ghost btn-sm"
+                      type="button"
+                      :disabled="!ghTokenInput.trim()"
+                      @click="saveGhToken"
+                    >
+                      保存
+                    </button>
+                  </div>
+                </template>
+                <p class="gh-token-hint">Token 仅保存在本机浏览器 localStorage，用于访问你的私有仓库</p>
+              </div>
+            </div>
+          </div>
+
           <div class="search-box skillhub-search">
             <AppIcon name="search" />
             <input
@@ -959,5 +1118,102 @@ function addSkillhubAgent(skill: SkillhubAgentDefinition): void {
 
 .skillhub-empty {
   padding: var(--space-6) 0;
+}
+
+/* —— 粘贴 GitHub 链接安装区（标题与目录搜索框之间） —— */
+
+.gh-install {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.gh-install-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* 链接输入框撑满剩余宽度 */
+.gh-install-search {
+  flex: 1;
+  max-width: none;
+}
+
+/* 安装状态文字：加载 / 成功 / 重复（警示） / 失败 */
+.gh-status {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.gh-status.is-loading {
+  color: var(--color-text-muted);
+}
+
+.gh-status.is-success {
+  color: var(--color-success);
+}
+
+.gh-status.is-warn {
+  color: var(--color-warning);
+}
+
+.gh-status.is-error {
+  color: var(--color-danger);
+}
+
+/* 私有仓库设置：小文字切换 + 可展开面板 */
+.gh-token-toggle {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+
+.gh-token-toggle:hover {
+  color: var(--color-brand);
+}
+
+.gh-token-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.gh-token-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.gh-token-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.gh-token-status {
+  flex: 1;
+  color: var(--color-success);
+  font-size: var(--font-size-sm);
+}
+
+.gh-token-hint {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
 }
 </style>

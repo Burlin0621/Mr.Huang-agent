@@ -131,3 +131,351 @@ export const SKILLHUB_AGENTS: SkillhubAgentDefinition[] = [
       '你是热门内容分析专家（内容捕手），基于用户提供的热门内容数据或截图（来自小红书、抖音、B站等平台），做爆款要素拆解、趋势归纳与选题结构建议。你不抓取任何平台，只分析用户提供的资料。\n\n<输入形态>\n用户提供内容清单（标题、作者、点赞/收藏/评论/播放等热度数据、话题标签、内容简介）或截图文字描述；信息不全时基于已有字段分析并说明局限。\n\n<分析方法论>\n1. 逐条建档：为每条内容归纳「标题 | 热度 | 一句话内容总结」\n2. 爆款要素拆解：标题套路（数字/悬念/对比/痛点）、开头钩子类型、内容结构（分点/故事/清单）、话题标签组合、情绪价值（共鸣/好奇/实用）\n3. 趋势归纳：按主题分类统计，指出高频话题、共性结构、平台差异\n4. 选题建议：从爆款规律提炼 5~8 个用户账号可复用的选题方向，每个附理由\n5. 结构模板：输出 1~2 套可套用的内容框架（标题公式 + 正文骨架 + 标签组合）\n</分析方法论>\n\n<汇报输出>\n1. 热门内容 TOP 榜（按平台分类，每条含标题、热度、内容总结）\n2. 各平台趋势 + 整体趋势\n3. 爆款要素分析\n4. 选题建议与内容模板\n\n除非用户另行要求，一律用中文回答。',
   },
 ]
+
+/* ==========================================================================
+   GitHub 技能链接安装：粘贴 GitHub 链接把仓库中的技能（SKILL.md）装成智能体
+   --------------------------------------------------------------------------
+   - 纯函数 + async fetch，无 Vue 依赖；统一走 api.github.com（响应带 CORS 头，
+     浏览器可直连；携带 Bearer Token 可访问私有仓库）
+   - GitHub Token 仅保存在本机 localStorage，用于访问私有仓库
+   ========================================================================== */
+
+/** GitHub 技能链接解析结果 */
+export interface ParsedGithubSkillUrl {
+  owner: string
+  repo: string
+  /** 分支名；仓库根链接未携带分支时为空串（走仓库默认分支） */
+  branch: string
+  /** 仓库内路径（无首尾斜杠）；仓库根链接为空串 */
+  path: string
+  /** 链接形态：file = 直接指向 SKILL.md；dir = 技能目录；root = 仓库根 */
+  kind: 'file' | 'dir' | 'root'
+}
+
+/** 从 GitHub 拉取并解析后的技能定义（可直接作为自定义智能体入参） */
+export interface GithubSkill {
+  name: string
+  description: string
+  systemPrompt: string
+  /** 技能目录名（SKILL.md 所在目录；仓库根时为仓库名） */
+  skillDir: string
+  owner: string
+  repo: string
+}
+
+/** GitHub Token 在 localStorage 中的持久化 key */
+const GITHUB_TOKEN_KEY = 'mr-huang-agent:github-token'
+/** GitHub REST API 地址 */
+const GITHUB_API_ORIGIN = 'https://api.github.com'
+/** SKILL.md 大小上限（100KB），超限拒绝安装 */
+const MAX_SKILL_MD_BYTES = 100 * 1024
+/** 描述超长时的截断长度 */
+const MAX_DESCRIPTION_LENGTH = 60
+
+/** 读取本机保存的 GitHub Token；localStorage 不可用时返回空串 */
+export function getGithubToken(): string {
+  try {
+    return localStorage.getItem(GITHUB_TOKEN_KEY) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+/** 保存 / 清除（传空串）本机 GitHub Token；持久化失败时静默降级 */
+export function setGithubToken(token: string): void {
+  const value = token.trim()
+  try {
+    if (value) localStorage.setItem(GITHUB_TOKEN_KEY, value)
+    else localStorage.removeItem(GITHUB_TOKEN_KEY)
+  } catch {
+    // 忽略持久化失败（如隐私模式下存储不可用）
+  }
+}
+
+/** URL 路径逐段解码（技能目录可能是中文名；单段解码失败时保留原文） */
+function decodePathSegments(pathname: string): string[] {
+  return pathname
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => {
+      try {
+        return decodeURIComponent(segment)
+      } catch {
+        return segment
+      }
+    })
+}
+
+/**
+ * 解析 GitHub 技能链接并规范化（容忍首尾空格、末尾斜杠、?query、#hash、
+ * 缺协议头自动补 https://、repo 段的 .git 后缀），支持：
+ * 1. https://github.com/{owner}/{repo}/blob/{branch}/{path…}/SKILL.md
+ * 2. https://github.com/{owner}/{repo}/tree/{branch}/{path…}（技能目录，拉取时列目录找 SKILL.md）
+ * 3. https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path…}/SKILL.md
+ * 4. 裸 github.com/... 无协议
+ * 其余格式返回 null（由调用方给出中文提示）。
+ */
+export function parseGithubSkillUrl(input: string): ParsedGithubSkillUrl | null {
+  const trimmed = input.trim()
+  if (!trimmed) return null
+  let url: URL
+  try {
+    url = new URL(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed) ? trimmed : `https://${trimmed}`)
+  } catch {
+    return null
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
+  const segments = decodePathSegments(url.pathname)
+
+  if (url.hostname === 'github.com' || url.hostname === 'www.github.com') {
+    const owner = segments[0] ?? ''
+    let repo = segments[1] ?? ''
+    if (repo.endsWith('.git')) repo = repo.slice(0, -4)
+    if (!owner || !repo) return null
+    const kindSegment = segments[2] ?? ''
+    const rest = segments.slice(3)
+    if (kindSegment === 'blob') {
+      const branch = rest[0] ?? ''
+      const path = rest.slice(1).join('/')
+      // blob 链接必须指向 SKILL.md 文件
+      if (!branch || path.split('/').pop() !== 'SKILL.md') return null
+      return { owner, repo, branch, path, kind: 'file' }
+    }
+    if (kindSegment === 'tree') {
+      const branch = rest[0] ?? ''
+      if (!branch) return null
+      const path = rest.slice(1).join('/')
+      // tree 到仓库根（如 /tree/main）按仓库根处理
+      return { owner, repo, branch, path, kind: path ? 'dir' : 'root' }
+    }
+    if (!kindSegment) return { owner, repo, branch: '', path: '', kind: 'root' }
+    // releases / issues / commit 等其他页面链接不支持
+    return null
+  }
+
+  if (url.hostname === 'raw.githubusercontent.com') {
+    const owner = segments[0] ?? ''
+    const repo = segments[1] ?? ''
+    const branch = segments[2] ?? ''
+    const path = segments.slice(3).join('/')
+    if (!owner || !repo || !branch || path.split('/').pop() !== 'SKILL.md') return null
+    return { owner, repo, branch, path, kind: 'file' }
+  }
+
+  return null
+}
+
+/** GitHub Contents API 目录条目（目录列举返回数组中的单项） */
+interface GithubContentsEntry {
+  name?: unknown
+  type?: unknown
+}
+
+/** GitHub Contents API 的文件响应 */
+interface GithubContentsFile {
+  size?: unknown
+  content?: unknown
+  encoding?: unknown
+}
+
+/** 调 GitHub API 取 JSON；网络异常与常见状态码统一抛中文错误 */
+async function requestGithubJson(apiPath: string, token: string | undefined): Promise<unknown> {
+  const headers: Record<string, string> = { Accept: 'application/vnd.github+json' }
+  if (token) headers.Authorization = `Bearer ${token}`
+  let response: Response
+  try {
+    response = await fetch(`${GITHUB_API_ORIGIN}${apiPath}`, { headers })
+  } catch {
+    throw new Error('网络请求失败，请检查网络后重试')
+  }
+  if (response.status === 404) {
+    throw new Error('未找到该技能：仓库不存在、链接有误，或为私有仓库且未配置 GitHub Token')
+  }
+  if (response.status === 403) {
+    throw new Error('GitHub 访问受限（可能触发限流），请稍后再试')
+  }
+  if (!response.ok) {
+    throw new Error(`GitHub 请求失败（HTTP ${response.status}），请稍后再试`)
+  }
+  try {
+    return await response.json()
+  } catch {
+    throw new Error('GitHub 返回了无法解析的内容，请稍后再试')
+  }
+}
+
+/** 仓库内路径逐段重新编码为 URL 路径（中文目录名等） */
+function encodeRepoPath(path: string): string {
+  return path
+    .split('/')
+    .filter(Boolean)
+    .map(encodeURIComponent)
+    .join('/')
+}
+
+/** 组装 contents API 路径（branch 为空时走仓库默认分支） */
+function contentsApiPath(owner: string, repo: string, path: string, branch: string): string {
+  const ref = branch ? `?ref=${encodeURIComponent(branch)}` : ''
+  return `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodeRepoPath(path)}${ref}`
+}
+
+/** 列举仓库目录（返回 name/type 列表）；响应不是目录数组时报错 */
+async function listGithubDir(
+  owner: string,
+  repo: string,
+  path: string,
+  branch: string,
+  token: string | undefined,
+): Promise<Array<{ name: string; type: string }>> {
+  const data = await requestGithubJson(contentsApiPath(owner, repo, path, branch), token)
+  if (!Array.isArray(data)) {
+    throw new Error('无法读取该目录：请确认链接指向技能目录（GitHub 返回的内容不是目录列表）')
+  }
+  return data.map((entry) => {
+    const item = (entry ?? {}) as GithubContentsEntry
+    return {
+      name: typeof item.name === 'string' ? item.name : '',
+      type: typeof item.type === 'string' ? item.type : '',
+    }
+  })
+}
+
+/** base64 → UTF-8 文本（GitHub 返回的 content 含换行需先去除；用 TextDecoder 保证中文不乱码） */
+function decodeBase64Utf8(base64: string): string {
+  const binary = atob(base64.replace(/\s/g, ''))
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+  return new TextDecoder().decode(bytes)
+}
+
+/** 拉取单个 SKILL.md 文件内容；超过 100KB 或内容缺失时抛中文错误 */
+async function fetchSkillMdContent(
+  owner: string,
+  repo: string,
+  path: string,
+  branch: string,
+  token: string | undefined,
+): Promise<string> {
+  const data = await requestGithubJson(contentsApiPath(owner, repo, path, branch), token)
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    throw new Error('未找到该技能：仓库不存在、链接有误，或为私有仓库且未配置 GitHub Token')
+  }
+  const file = data as GithubContentsFile
+  if (typeof file.size === 'number' && file.size > MAX_SKILL_MD_BYTES) {
+    throw new Error('SKILL.md 过大（超过 100KB），暂不支持')
+  }
+  if (typeof file.content !== 'string' || file.encoding !== 'base64') {
+    // 文件超过 1MB 时 GitHub 不内联返回 content，统一按过大处理
+    throw new Error('SKILL.md 过大（超过 100KB），暂不支持')
+  }
+  return decodeBase64Utf8(file.content)
+}
+
+/** 去掉 YAML 值两侧的成对引号 */
+function stripQuotes(value: string): string {
+  const trimmed = value.trim()
+  if (
+    trimmed.length >= 2 &&
+    ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+      (trimmed.startsWith("'") && trimmed.endsWith("'")))
+  ) {
+    return trimmed.slice(1, -1).trim()
+  }
+  return trimmed
+}
+
+/**
+ * 解析 SKILL.md 顶部的 YAML frontmatter（--- 包围块），提取 name / description。
+ * description 兼容单行（可带引号）与多行块标量（> / >- / | 等，取后续缩进行拼为单行）；
+ * 拿不到的字段为空串，由调用方回退。
+ */
+function parseFrontmatter(text: string): { name: string; description: string; body: string } {
+  const normalized = text.replace(/^\uFEFF/, '')
+  const lines = normalized.split(/\r?\n/)
+  if (lines[0]?.trim() !== '---') {
+    return { name: '', description: '', body: normalized.trim() }
+  }
+  const endLine = lines.findIndex((line, index) => index > 0 && line.trim() === '---')
+  if (endLine === -1) {
+    return { name: '', description: '', body: normalized.trim() }
+  }
+  const frontmatterLines = lines.slice(1, endLine)
+  const body = lines.slice(endLine + 1).join('\n').trim()
+
+  const nameLine = frontmatterLines.find((line) => /^name\s*:/.test(line))
+  const name = nameLine ? stripQuotes(nameLine.replace(/^name\s*:/, '')) : ''
+
+  const descriptionIndex = frontmatterLines.findIndex((line) => /^description\s*:/.test(line))
+  let description = ''
+  if (descriptionIndex !== -1) {
+    let inline = frontmatterLines[descriptionIndex].replace(/^description\s*:/, '').trim()
+    if (/^[>|][+-]?$/.test(inline)) inline = '' // 块标量标记，真实内容在后续缩进行
+    const parts = inline ? [stripQuotes(inline)] : []
+    for (let index = descriptionIndex + 1; index < frontmatterLines.length; index += 1) {
+      const line = frontmatterLines[index]
+      // 空行或下一个顶格 key 即块结束
+      if (!line || !line.trim() || !/^\s/.test(line)) break
+      parts.push(line.trim())
+    }
+    description = parts.join(' ').replace(/\s+/g, ' ').trim()
+  }
+  return { name, description, body }
+}
+
+/**
+ * 从 GitHub 拉取技能并解析为智能体定义：
+ * - blob / raw 链接直接取 SKILL.md；tree 目录链接列目录找 SKILL.md（大小写敏感）；
+ *   仓库根链接只认根下直接存在 SKILL.md 的单技能仓库，检测到 skills/ 目录时提示
+ *   进入具体技能目录（不做递归猜测）
+ * - token 用于访问私有仓库；错误统一抛中文信息
+ */
+export async function fetchSkillFromGithub(url: string, token?: string): Promise<GithubSkill> {
+  const parsed = parseGithubSkillUrl(url)
+  if (!parsed) {
+    throw new Error('无法识别该链接：请粘贴 GitHub 技能目录（含 SKILL.md）或 SKILL.md 文件的链接')
+  }
+  const { owner, repo, branch, path, kind } = parsed
+
+  let skillMdPath = ''
+  if (kind === 'file') {
+    skillMdPath = path
+  } else if (kind === 'dir') {
+    const entries = await listGithubDir(owner, repo, path, branch, token)
+    if (!entries.some((entry) => entry.type === 'file' && entry.name === 'SKILL.md')) {
+      throw new Error('该目录下未找到 SKILL.md：请确认链接指向技能目录（目录内需包含 SKILL.md）')
+    }
+    skillMdPath = `${path}/SKILL.md`
+  } else {
+    const entries = await listGithubDir(owner, repo, '', branch, token)
+    if (entries.some((entry) => entry.type === 'file' && entry.name === 'SKILL.md')) {
+      skillMdPath = 'SKILL.md'
+    } else if (entries.some((entry) => entry.type === 'dir' && entry.name === 'skills')) {
+      throw new Error('检测到该仓库的 skills/ 技能目录：请进入具体技能目录后复制链接，再粘贴安装')
+    } else {
+      throw new Error('暂不支持仓库根链接：请进入包含 SKILL.md 的技能目录后复制链接')
+    }
+  }
+
+  const raw = await fetchSkillMdContent(owner, repo, skillMdPath, branch, token)
+  const { name, description, body } = parseFrontmatter(raw)
+  if (!body) throw new Error('SKILL.md 没有正文内容')
+
+  // 技能目录名：SKILL.md 的上一级目录；仓库根时回退仓库名
+  const pathSegments = skillMdPath.split('/')
+  const skillDir = pathSegments.length >= 2 ? pathSegments[pathSegments.length - 2] : repo
+  const displayName = name || skillDir
+  const displayDescription = description
+    ? description.length > MAX_DESCRIPTION_LENGTH
+      ? `${description.slice(0, MAX_DESCRIPTION_LENGTH)}…`
+      : description
+    : '从 GitHub 安装的技能智能体'
+
+  // 正文末尾若无中文回答约束则统一追加
+  const systemPrompt = /用中文回答/.test(body)
+    ? body
+    : `${body}\n\n除非用户另行要求，一律用中文回答。`
+
+  return { name: displayName, description: displayDescription, systemPrompt, skillDir, owner, repo }
+}
