@@ -23,14 +23,14 @@ const filteredAgents = computed<AgentView[]>(() => {
   )
 })
 
-/* —— 卡片图片头像（加载失败时回退 emoji / 首字） —— */
+/* —— 行头像（图片加载失败时回退 emoji / 首字） —— */
 
 /** 图片头像加载失败的智能体 id 集合（@error 时记入，触发回退显示） */
 const failedAvatarIds = reactive(new Set<string>())
 
-/* —— 卡片「更多」菜单（同屏只开一个；点外部 / Esc 关闭） —— */
+/* —— 行「更多」菜单（同屏只开一个；点外部 / Esc 关闭） —— */
 
-/** 当前打开菜单的卡片 id */
+/** 当前打开菜单的行 id */
 const openMenuId = ref<string | null>(null)
 
 function toggleMenu(id: string): void {
@@ -69,11 +69,17 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', onDocumentKeydown)
 })
 
-/* —— 卡片操作 —— */
+/* —— 行操作 —— */
 
 /** 跳转 AI 对话并携带 agent 查询参数预选 */
 function startChat(agent: AgentView): void {
   void router.push({ path: '/chat', query: { agent: agent.id } })
+}
+
+/** 从更多菜单打开编辑弹窗 */
+function editAgent(agent: AgentView): void {
+  closeMenu()
+  openEditModal(agent)
 }
 
 /** 停用 / 启用（通用助手为默认兜底，store 内部会忽略） */
@@ -233,47 +239,38 @@ function resetBuiltinFromModal(): void {
       <span class="agents-count">共 {{ filteredAgents.length }} 个智能体</span>
     </div>
 
-    <div v-if="filteredAgents.length" class="agents-grid">
+    <div v-if="filteredAgents.length" class="agents-list">
       <article
         v-for="agent in filteredAgents"
         :key="agent.id"
-        class="agent-card"
+        class="agent-row"
         :class="{ 'is-disabled': agent.disabled }"
       >
-        <div class="agent-card-head">
-          <span class="agent-avatar" aria-hidden="true">
-            <img
-              v-if="agent.avatar && !failedAvatarIds.has(agent.id)"
-              :src="agent.avatar"
-              :alt="agent.name"
-              class="agent-avatar-img"
-              @error="failedAvatarIds.add(agent.id)"
-            />
-            <template v-else>{{ agent.icon || agent.name.slice(0, 1) }}</template>
-          </span>
-          <div class="agent-title-group">
-            <h2 class="agent-name">{{ agent.name }}</h2>
-            <div class="agent-meta">
-              <span v-if="agent.builtin" class="chip chip-builtin">内置</span>
-              <span v-if="agent.customized" class="chip chip-modified">已修改</span>
-              <span class="chip" :class="agent.disabled ? 'chip-off' : 'chip-on'">
-                {{ agent.disabled ? '停用' : '启用' }}
-              </span>
-            </div>
-          </div>
-        </div>
+        <span class="agent-avatar" aria-hidden="true">
+          <img
+            v-if="agent.avatar && !failedAvatarIds.has(agent.id)"
+            :src="agent.avatar"
+            :alt="agent.name"
+            class="agent-avatar-img"
+            @error="failedAvatarIds.add(agent.id)"
+          />
+          <template v-else>{{ agent.icon || agent.name.slice(0, 1) }}</template>
+        </span>
 
-        <p class="agent-desc">{{ agent.description }}</p>
-        <p class="agent-prompt">
-          {{ agent.systemPrompt || '未配置系统提示词，对话时保持默认通用行为。' }}
-        </p>
-        <div v-if="agent.tags.length" class="agent-tags">
-          <span v-for="tag in agent.tags" :key="tag" class="chip chip-tag">{{ tag }}</span>
+        <div class="agent-main">
+          <div class="agent-title-line">
+            <h2 class="agent-name">{{ agent.name }}</h2>
+            <span v-if="agent.builtin" class="chip chip-builtin">内置</span>
+            <span v-if="agent.customized" class="chip chip-modified">已修改</span>
+            <span v-if="agent.disabled" class="chip chip-off">停用</span>
+            <span v-for="tag in agent.tags" :key="tag" class="chip chip-tag">{{ tag }}</span>
+          </div>
+          <p class="agent-desc">{{ agent.description }}</p>
         </div>
 
         <div class="agent-actions">
           <button
-            class="btn btn-primary btn-sm"
+            class="btn btn-ghost btn-sm"
             type="button"
             :disabled="agent.disabled"
             title="跳转到 AI 对话并使用该智能体"
@@ -281,15 +278,6 @@ function resetBuiltinFromModal(): void {
           >
             <AppIcon name="chat" />
             开始对话
-          </button>
-          <button
-            class="btn btn-ghost btn-sm"
-            type="button"
-            title="编辑智能体"
-            @click="openEditModal(agent)"
-          >
-            <AppIcon name="edit" />
-            编辑
           </button>
           <div class="agent-more">
             <button
@@ -301,6 +289,7 @@ function resetBuiltinFromModal(): void {
               <AppIcon name="more" />
             </button>
             <div v-if="openMenuId === agent.id" class="agent-menu">
+              <button class="menu-item" type="button" @click="editAgent(agent)">编辑</button>
               <button
                 v-if="agent.id !== DEFAULT_AGENT_ID"
                 class="menu-item"
@@ -484,58 +473,52 @@ function resetBuiltinFromModal(): void {
   white-space: nowrap;
 }
 
-/* —— 卡片网格 —— */
-.agents-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: var(--space-5);
-}
-
-.agent-card {
+/* —— 行式列表：垂直堆叠的独立圆角行 —— */
+.agents-list {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  padding: var(--space-5);
+}
+
+.agent-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  padding: var(--space-4) var(--space-5);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
+  border-radius: var(--radius-md);
   transition:
-    background-color var(--transition-theme),
-    border-color var(--transition-theme),
-    box-shadow var(--transition-fast);
+    background-color var(--transition-fast),
+    border-color var(--transition-theme);
 }
 
-.agent-card:hover {
-  box-shadow: var(--shadow-md);
+.agent-row:hover {
+  background: var(--color-surface-muted);
 }
 
-/* 停用的卡片整体降饱和 */
-.agent-card.is-disabled {
+/* 停用的行整体降饱和 */
+.agent-row.is-disabled {
   opacity: 0.62;
   filter: saturate(0.55);
 }
 
-.agent-card-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-
+/* —— 圆形头像 —— */
 .agent-avatar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: 48px;
+  height: 48px;
   flex-shrink: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-full);
   background: var(--color-brand-soft);
   font-size: var(--font-size-xl);
   line-height: 1;
 }
 
-/* 图片头像：铺满色块，圆角随容器 */
+/* 图片头像：铺满圆形，圆角随容器 */
 .agent-avatar-img {
   width: 100%;
   height: 100%;
@@ -543,25 +526,29 @@ function resetBuiltinFromModal(): void {
   object-fit: cover;
 }
 
-.agent-title-group {
+/* —— 行主体：名称+徽标+标签 / 描述 两行堆叠 —— */
+.agent-main {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+}
+
+.agent-title-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
   min-width: 0;
 }
 
 .agent-name {
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-md);
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.agent-meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
 }
 
 .agent-desc {
@@ -570,22 +557,6 @@ function resetBuiltinFromModal(): void {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.agent-prompt {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  overflow: hidden;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
-  line-height: 1.6;
-}
-
-.agent-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
 }
 
 /* —— 徽章 chips —— */
@@ -610,11 +581,7 @@ function resetBuiltinFromModal(): void {
   color: var(--color-warning);
 }
 
-.chip-on {
-  background: var(--color-success-soft);
-  color: var(--color-success);
-}
-
+/* 停用状态徽标（名称旁） */
 .chip-off {
   background: var(--color-warning-soft);
   color: var(--color-warning);
@@ -625,13 +592,13 @@ function resetBuiltinFromModal(): void {
   color: var(--color-text-secondary);
 }
 
-/* —— 卡片操作区 —— */
+/* —— 行操作区（右侧） —— */
 .agent-actions {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin-top: auto;
-  padding-top: var(--space-2);
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .btn-sm {
@@ -642,7 +609,6 @@ function resetBuiltinFromModal(): void {
 
 .agent-more {
   position: relative;
-  margin-left: auto;
 }
 
 .agent-menu {
@@ -684,6 +650,15 @@ function resetBuiltinFromModal(): void {
 .menu-danger:hover {
   background: var(--color-danger-soft);
   color: var(--color-danger);
+}
+
+/* —— 窄屏：操作区整体换行到第二行，描述保持截断 —— */
+@media (max-width: 639px) {
+  .agent-actions {
+    flex-basis: 100%;
+    justify-content: flex-end;
+    margin-left: 0;
+  }
 }
 
 /* —— 新建 / 编辑模态 —— */
