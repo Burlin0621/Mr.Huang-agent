@@ -95,7 +95,7 @@ export const useAgentsStore = defineStore('agents', () => {
       description: agent.description,
       systemPrompt: agent.systemPrompt,
       icon: agent.icon ?? DEFAULT_AGENT_ICON,
-      tags: [] as string[],
+      tags: agent.tags ?? [],
       builtin: true,
       disabled: disabledIds.value.includes(agent.id),
     })),
