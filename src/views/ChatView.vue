@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
@@ -14,6 +14,37 @@ import {
 
 const llmStore = useLlmStore()
 const { configs, activeConfigId, activeConfig } = storeToRefs(llmStore)
+
+/* —— 当前使用的模型（配置 × 模型 二维选择） —— */
+
+/** 用户在顶部下拉中显式选择的模型 ID（'' 表示未显式选择，默认用主模型） */
+const activeModelId = ref('')
+
+/** 实际使用的模型：未显式选择、或所选模型不在当前配置中时，回退主模型 */
+const currentModelId = computed<string>(() => {
+  const config = activeConfig.value
+  if (!config) return ''
+  return config.modelIds.includes(activeModelId.value)
+    ? activeModelId.value
+    : (config.modelIds[0] ?? '')
+})
+
+/** 下拉框的组合值（配置 id :: 模型 id），供按配置分组的合并单层下拉使用 */
+const modelSelectValue = computed<string>(() =>
+  activeConfig.value ? `${activeConfig.value.id}::${currentModelId.value}` : '',
+)
+
+function onModelSelectChange(event: Event): void {
+  const value = (event.target as HTMLSelectElement).value
+  const separatorIndex = value.indexOf('::')
+  if (separatorIndex <= 0) return
+  const nextConfigId = value.slice(0, separatorIndex)
+  const nextModelId = value.slice(separatorIndex + 2)
+  if (nextConfigId !== activeConfigId.value) {
+    activeConfigId.value = nextConfigId
+  }
+  activeModelId.value = nextModelId
+}
 
 /* —— 会话消息 —— */
 
@@ -73,8 +104,8 @@ function buildHistory(): LlmChatMessage[] {
   return history
 }
 
-function validateBeforeSend(config: LlmConfig): string | null {
-  if (!config.modelId.trim()) {
+function validateBeforeSend(config: LlmConfig, modelId: string): string | null {
+  if (!modelId) {
     return `当前模型配置「${config.name}」缺少模型 ID，请到设置页补全后再试。`
   }
   if (!config.apiKey.trim() && !getProviderPreset(config.providerKey)?.apiKeyOptional) {
@@ -88,7 +119,9 @@ async function sendMessage(): Promise<void> {
   if (!text || streaming.value || !activeConfig.value) return
 
   const config = activeConfig.value
-  const invalidReason = validateBeforeSend(config)
+  // 发送瞬间读取当前选中模型：切换模型立即生效（作用于下一条消息）
+  const modelId = currentModelId.value
+  const invalidReason = validateBeforeSend(config, modelId)
   if (invalidReason) {
     pushErrorNote(invalidReason)
     return
@@ -106,7 +139,7 @@ async function sendMessage(): Promise<void> {
       endpoint: {
         baseUrl: config.baseUrl,
         apiKey: config.apiKey,
-        modelId: config.modelId,
+        modelId,
         temperature: config.temperature,
         timeoutSeconds: config.timeoutSeconds,
         maxRetries: config.maxRetries,
@@ -203,14 +236,21 @@ watch(
         <label class="chat-model-label" for="chat-model-select">当前模型</label>
         <select
           id="chat-model-select"
-          v-model="activeConfigId"
           class="chat-model-select"
           :class="{ 'is-empty': !activeConfig }"
+          :value="modelSelectValue"
+          @change="onModelSelectChange"
         >
-          <option value="" disabled>请选择模型配置</option>
-          <option v-for="config in configs" :key="config.id" :value="config.id">
-            {{ config.name }}（{{ config.modelId }}）
-          </option>
+          <option value="" disabled>请选择模型</option>
+          <template v-for="config in configs" :key="config.id">
+            <option
+              v-for="(model, index) in config.modelIds"
+              :key="`${config.id}:${model}`"
+              :value="`${config.id}::${model}`"
+            >
+              {{ config.name }} / {{ model }}{{ index === 0 ? '（主）' : '' }}
+            </option>
+          </template>
         </select>
       </div>
       <button
@@ -237,8 +277,8 @@ watch(
 
         <!-- 已有配置但未选择 -->
         <div v-else-if="!activeConfig" class="chat-guide">
-          <h2>请选择要使用的模型配置</h2>
-          <p>在右上角的下拉框中选择一套模型配置，即可开始对话。</p>
+          <h2>请选择要使用的模型</h2>
+          <p>在右上角的下拉框中选择模型（按配置分组，主模型标「主」），即可开始对话。</p>
         </div>
 
         <template v-else>

@@ -42,7 +42,8 @@ function startCreate(): void {
 }
 
 function startEdit(config: LlmConfig): void {
-  Object.assign(form, { ...config })
+  // modelIds 单独拷贝，避免编辑表单时直接改动 store 里的数组
+  Object.assign(form, { ...config, modelIds: [...config.modelIds] })
   editingId.value = config.id
   formErrors.value = []
   testResult.value = null
@@ -73,7 +74,7 @@ function validateForm(): string[] {
   } else if (!/^https?:\/\//i.test(form.baseUrl.trim())) {
     errors.push('接口地址必须以 http:// 或 https:// 开头')
   }
-  if (!form.modelId.trim()) errors.push('模型 ID 不能为空')
+  if (form.modelIds.length === 0) errors.push('模型 ID 不能为空（至少选择或手动填写 1 个）')
   if (!form.apiKey.trim() && !apiKeyOptional.value) {
     errors.push(`该厂商需要填写 API Key（${providerLabel(form.providerKey)}）`)
   }
@@ -86,13 +87,15 @@ function clampField(value: number, min: number, max: number): number {
 }
 
 function buildConfigFromForm(): LlmConfig {
+  const modelIds = [...form.modelIds]
   return {
     id: editingId.value || form.id,
     name: form.name.trim(),
     providerKey: form.providerKey,
     baseUrl: form.baseUrl.trim(),
     apiKey: form.apiKey.trim(),
-    modelId: form.modelId.trim(),
+    modelId: modelIds[0] ?? '',
+    modelIds,
     temperature: clampField(Number(form.temperature), 0, 2),
     timeoutSeconds: Math.round(clampField(Number(form.timeoutSeconds), 1, 3600)),
     maxRetries: Math.round(clampField(Number(form.maxRetries), 0, 5)),
@@ -120,7 +123,7 @@ function removeConfig(config: LlmConfig): void {
   llmStore.removeConfig(config.id)
 }
 
-/* —— 模型列表在线获取 —— */
+/* —— 模型多选（chips + 在线列表复选） —— */
 
 const fetchingModels = ref(false)
 /** 已拉取到的模型列表（null 表示尚未获取）；baseUrl / apiKey 变化后失效 */
@@ -128,6 +131,8 @@ const fetchedModels = ref<string[] | null>(null)
 const showModelList = ref(false)
 const modelSearch = ref('')
 const modelFetchError = ref('')
+/** 手动填写模型 ID 的输入框内容 */
+const modelInput = ref('')
 
 /** baseUrl 为合法 http(s) 地址时才允许获取 */
 const canFetchModels = computed(() => /^https?:\/\//i.test(form.baseUrl.trim()))
@@ -139,11 +144,13 @@ const filteredModels = computed<string[]>(() => {
   return models.filter((model) => model.toLowerCase().includes(keyword))
 })
 
+/** 仅清空「已拉取列表」缓存与展示状态；不清空已选 chips（用户手选的不丢） */
 function resetModelPicker(): void {
   fetchedModels.value = null
   showModelList.value = false
   modelSearch.value = ''
   modelFetchError.value = ''
+  modelInput.value = ''
 }
 
 async function fetchModels(): Promise<void> {
@@ -170,17 +177,49 @@ async function fetchModels(): Promise<void> {
   }
 }
 
-/** 选中某个模型：回填到输入框并收起列表（手填能力保留，可随时改） */
-function selectModel(modelId: string): void {
-  form.modelId = modelId
-  showModelList.value = false
+function isModelSelected(modelId: string): boolean {
+  return form.modelIds.includes(modelId)
 }
 
-/** baseUrl 或 API Key 变化后，缓存失效（含厂商预设切换导致的 baseUrl 变化） */
+/**
+ * 列表内勾选/取消某个模型（勾选结果实时写入 chips）。
+ * 取消的是最后一个已选模型时拒绝操作（至少保留 1 个）。
+ */
+function toggleModel(modelId: string): void {
+  const index = form.modelIds.indexOf(modelId)
+  if (index >= 0) {
+    if (form.modelIds.length <= 1) return
+    form.modelIds.splice(index, 1)
+  } else {
+    form.modelIds.push(modelId)
+  }
+}
+
+/** 移除某个已选 chip；移除主模型后下一个自动成为主模型 */
+function removeModel(index: number): void {
+  if (form.modelIds.length <= 1) return
+  form.modelIds.splice(index, 1)
+}
+
+/** 手动添加模型 ID：校验非空、去重，追加为新 chip */
+function addManualModel(): void {
+  const modelId = modelInput.value.trim()
+  if (!modelId || isModelSelected(modelId)) {
+    modelInput.value = ''
+    return
+  }
+  form.modelIds.push(modelId)
+  modelInput.value = ''
+}
+
+/** baseUrl 或 API Key 变化后，已拉取列表缓存失效（含厂商预设切换导致的 baseUrl 变化） */
 watch(
   () => [form.baseUrl, form.apiKey],
   () => {
-    resetModelPicker()
+    fetchedModels.value = null
+    showModelList.value = false
+    modelSearch.value = ''
+    modelFetchError.value = ''
   },
 )
 
@@ -233,7 +272,9 @@ async function runTest(): Promise<void> {
             </span>
           </div>
           <div class="config-meta">
-            <code class="config-model">{{ config.modelId }}</code>
+            <code class="config-model" :title="config.modelIds.join('、')">
+              {{ config.modelIds.join('、') }}
+            </code>
             <span class="config-url" :title="config.baseUrl">{{ config.baseUrl }}</span>
           </div>
         </div>
@@ -330,25 +371,71 @@ async function runTest(): Promise<void> {
         </label>
 
         <div class="field field-wide">
-          <span class="field-label">模型 ID <em>*</em></span>
-          <span class="model-id-row">
-            <input
-              v-model.trim="form.modelId"
-              class="field-input"
-              type="text"
-              placeholder="例如：glm-4.6 / deepseek-chat"
-              spellcheck="false"
-            />
-            <button
-              class="btn btn-ghost btn-sm"
-              type="button"
-              :disabled="!canFetchModels || fetchingModels"
-              :title="canFetchModels ? '从接口获取可用模型列表' : '请先填写正确的 baseUrl'"
-              @click="fetchModels"
-            >
-              {{ fetchingModels ? '获取中…' : '获取' }}
-            </button>
+          <span class="field-label">
+            模型 ID <em>*</em>
+            <span class="field-hint">可多选，第一个为主模型（用于测试连接与默认对话）</span>
           </span>
+          <div class="model-multi">
+            <div class="model-chips" :class="{ 'is-empty': form.modelIds.length === 0 }">
+              <span v-if="form.modelIds.length === 0" class="model-chips-empty">
+                尚未选择模型，可点击右侧「获取」或直接手动填写
+              </span>
+              <span
+                v-for="(model, index) in form.modelIds"
+                :key="model"
+                class="model-chip"
+                :class="{ 'is-primary': index === 0 }"
+              >
+                <span
+                  v-if="index === 0"
+                  class="chip-primary-badge"
+                  title="主模型，用于测试连接与默认对话"
+                >
+                  主
+                </span>
+                <span class="chip-name" :title="model">{{ model }}</span>
+                <button
+                  class="chip-remove"
+                  type="button"
+                  :disabled="form.modelIds.length <= 1"
+                  :title="
+                    form.modelIds.length <= 1 ? '至少保留 1 个模型' : `移除 ${model}`
+                  "
+                  :aria-label="`移除模型 ${model}`"
+                  @click="removeModel(index)"
+                >
+                  ×
+                </button>
+              </span>
+            </div>
+            <span class="model-id-row">
+              <input
+                v-model="modelInput"
+                class="field-input"
+                type="text"
+                placeholder="手动填写模型 ID，回车或点「添加」"
+                spellcheck="false"
+                @keydown.enter.prevent="addManualModel"
+              />
+              <button
+                class="btn btn-ghost btn-sm"
+                type="button"
+                :disabled="!modelInput.trim()"
+                @click="addManualModel"
+              >
+                添加
+              </button>
+              <button
+                class="btn btn-ghost btn-sm"
+                type="button"
+                :disabled="!canFetchModels || fetchingModels"
+                :title="canFetchModels ? '从接口获取可用模型列表' : '请先填写正确的 baseUrl'"
+                @click="fetchModels"
+              >
+                {{ fetchingModels ? '获取中…' : '获取' }}
+              </button>
+            </span>
+          </div>
           <button
             v-if="fetchedModels !== null && !showModelList"
             class="model-reopen"
@@ -358,7 +445,10 @@ async function runTest(): Promise<void> {
             已获取 {{ fetchedModels.length }} 个模型，点击重新选择
           </button>
           <div v-if="fetchedModels !== null && showModelList" class="model-picker">
-            <p class="model-picker-head">共 {{ fetchedModels.length }} 个模型，来自接口实时获取</p>
+            <p class="model-picker-head">
+              共 {{ fetchedModels.length }} 个模型，已选 {{ form.modelIds.length }} 个（点击勾选/取消，至少保留
+              1 个）
+            </p>
             <input
               v-model="modelSearch"
               class="field-input model-search"
@@ -368,19 +458,34 @@ async function runTest(): Promise<void> {
             />
             <ul class="model-picker-list">
               <li v-for="model in filteredModels" :key="model">
-                <button
-                  class="model-option"
-                  :class="{ 'is-selected': model === form.modelId }"
-                  type="button"
-                  @click="selectModel(model)"
-                >
-                  {{ model }}
-                </button>
+                <label class="model-option" :class="{ 'is-selected': isModelSelected(model) }">
+                  <input
+                    class="model-option-check"
+                    type="checkbox"
+                    :checked="isModelSelected(model)"
+                    :disabled="form.modelIds.length <= 1 && isModelSelected(model)"
+                    @change="toggleModel(model)"
+                  />
+                  <span class="model-option-name" :title="model">{{ model }}</span>
+                  <span
+                    v-if="form.modelIds[0] === model"
+                    class="model-option-primary"
+                    title="主模型，用于测试连接与默认对话"
+                  >
+                    主
+                  </span>
+                </label>
               </li>
               <li v-if="filteredModels.length === 0" class="model-picker-empty">
                 没有匹配「{{ modelSearch }}」的模型，可调整关键词或直接手动填写
               </li>
             </ul>
+            <div class="model-picker-foot">
+              <span class="model-picker-foot-hint">勾选结果已实时生效</span>
+              <button class="btn btn-primary btn-sm" type="button" @click="showModelList = false">
+                确定
+              </button>
+            </div>
           </div>
           <p v-if="modelFetchError" class="model-fetch-error">{{ modelFetchError }}</p>
         </div>
@@ -532,6 +637,9 @@ async function runTest(): Promise<void> {
   background: var(--color-surface-muted);
   color: var(--color-text);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 340px;
 }
 
 .config-url {
@@ -651,7 +759,95 @@ async function runTest(): Promise<void> {
   flex: 1;
 }
 
-/* —— 模型 ID 在线获取 —— */
+/* —— 模型 ID 多选 —— */
+.model-multi {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.model-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 38px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.model-chips.is-empty {
+  border-style: dashed;
+}
+
+.model-chips-empty {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.model-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  padding: 2px 4px 2px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.model-chip.is-primary {
+  border-color: var(--color-brand);
+  background: var(--color-brand-soft);
+}
+
+.chip-primary-badge {
+  flex-shrink: 0;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  background: var(--color-brand);
+  color: var(--color-on-brand);
+  font-size: var(--font-size-xs);
+  line-height: 18px;
+  cursor: help;
+}
+
+.chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chip-remove {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-md);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.chip-remove:not(:disabled):hover {
+  background: var(--color-border);
+  color: var(--color-danger);
+}
+
+.chip-remove:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .model-id-row {
   display: flex;
   gap: var(--space-2);
@@ -715,19 +911,16 @@ async function runTest(): Promise<void> {
 }
 
 .model-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   width: 100%;
   padding: var(--space-2) var(--space-3);
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text);
-  font: inherit;
-  font-family: var(--font-mono);
   font-size: var(--font-size-sm);
-  text-align: left;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   cursor: pointer;
 }
 
@@ -737,7 +930,54 @@ async function runTest(): Promise<void> {
 
 .model-option.is-selected {
   background: var(--color-brand-soft);
+}
+
+.model-option-check {
+  flex-shrink: 0;
+  accent-color: var(--color-brand);
+  cursor: pointer;
+}
+
+.model-option-check:disabled {
+  cursor: not-allowed;
+}
+
+.model-option-name {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-option.is-selected .model-option-name {
   color: var(--color-brand);
+}
+
+.model-option-primary {
+  flex-shrink: 0;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  background: var(--color-brand);
+  color: var(--color-on-brand);
+  font-size: var(--font-size-xs);
+  line-height: 18px;
+}
+
+.model-picker-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.model-picker-foot-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
 }
 
 .model-picker-empty {

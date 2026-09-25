@@ -10,7 +10,10 @@ export interface LlmConfig {
   providerKey: string
   baseUrl: string
   apiKey: string
+  /** 主模型 ID（冗余字段，恒等于 modelIds[0]，保留以兼容既有调用点） */
   modelId: string
+  /** 可用模型列表（多选），第一个元素为主模型 */
+  modelIds: string[]
   temperature: number
   timeoutSeconds: number
   maxRetries: number
@@ -38,14 +41,34 @@ export function createDefaultConfigDraft(): LlmConfig {
     baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
     apiKey: '',
     modelId: '',
+    modelIds: [],
     temperature: DEFAULT_TEMPERATURE,
     timeoutSeconds: DEFAULT_TIMEOUT_SECONDS,
     maxRetries: DEFAULT_MAX_RETRIES,
   }
 }
 
+/**
+ * 归一化模型列表：逐项去空白、去重；列表缺失/为空时回退到旧的 modelId 单值字段
+ * （旧数据迁移：modelId(string) → modelIds = [modelId]）。纯函数，便于直接单测。
+ */
+export function normalizeModelIds(rawModelIds: unknown, fallbackModelId: unknown): string[] {
+  const ids: string[] = []
+  if (Array.isArray(rawModelIds)) {
+    for (const item of rawModelIds) {
+      if (typeof item === 'string' && item.trim() && !ids.includes(item.trim())) {
+        ids.push(item.trim())
+      }
+    }
+  }
+  if (ids.length === 0 && typeof fallbackModelId === 'string' && fallbackModelId.trim()) {
+    ids.push(fallbackModelId.trim())
+  }
+  return ids
+}
+
 /** 读取持久化的配置列表，逐条做防御性归一化（坏数据直接丢弃） */
-function loadConfigs(): LlmConfig[] {
+export function loadConfigs(): LlmConfig[] {
   try {
     const raw = localStorage.getItem(CONFIGS_STORAGE_KEY)
     if (!raw) return []
@@ -58,15 +81,16 @@ function loadConfigs(): LlmConfig[] {
       const id = typeof record.id === 'string' ? record.id : ''
       const name = typeof record.name === 'string' ? record.name : ''
       const baseUrl = typeof record.baseUrl === 'string' ? record.baseUrl : ''
-      const modelId = typeof record.modelId === 'string' ? record.modelId : ''
-      if (!id || !name.trim() || !baseUrl.trim() || !modelId.trim()) continue
+      const modelIds = normalizeModelIds(record.modelIds, record.modelId)
+      if (!id || !name.trim() || !baseUrl.trim() || modelIds.length === 0) continue
       configs.push({
         id,
         name: name.trim(),
         providerKey: typeof record.providerKey === 'string' ? record.providerKey : 'custom',
         baseUrl: baseUrl.trim(),
         apiKey: typeof record.apiKey === 'string' ? record.apiKey : '',
-        modelId: modelId.trim(),
+        modelId: modelIds[0],
+        modelIds,
         temperature: clampNumber(record.temperature, 0, 2, DEFAULT_TEMPERATURE),
         timeoutSeconds: Math.round(
           clampNumber(record.timeoutSeconds, 1, 3600, DEFAULT_TIMEOUT_SECONDS),
@@ -131,10 +155,16 @@ export const useLlmStore = defineStore('llm', () => {
     { deep: true },
   )
 
+  /** 写入前归一化模型列表，并保持 modelId = modelIds[0]（主模型冗余） */
+  function withNormalizedModels<T extends LlmConfig | Omit<LlmConfig, 'id'>>(input: T): T {
+    const modelIds = normalizeModelIds(input.modelIds, input.modelId)
+    return { ...input, modelIds, modelId: modelIds[0] ?? '' }
+  }
+
   /** 新增配置；若当前没有选中的配置则自动设为当前使用。返回新配置 id。 */
   function addConfig(input: Omit<LlmConfig, 'id'>): string {
     const id = crypto.randomUUID()
-    configs.value.push({ ...input, id })
+    configs.value.push({ ...withNormalizedModels(input), id })
     if (!activeConfigId.value) {
       activeConfigId.value = id
     }
@@ -145,7 +175,7 @@ export const useLlmStore = defineStore('llm', () => {
   function updateConfig(next: LlmConfig): void {
     const index = configs.value.findIndex((config) => config.id === next.id)
     if (index >= 0) {
-      configs.value[index] = { ...next }
+      configs.value[index] = { ...withNormalizedModels(next) }
     }
   }
 
