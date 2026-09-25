@@ -2,12 +2,14 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
+import { useAgentsStore } from '@/stores/agents'
 import { DEFAULT_SKILL_ICON, useSkillsStore, type SkillView } from '@/stores/skills'
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
 
 const router = useRouter()
 const skillsStore = useSkillsStore()
+const agentsStore = useAgentsStore()
 
 /* —— 搜索与过滤 —— */
 
@@ -21,6 +23,27 @@ const filteredSkills = computed<SkillView[]>(() => {
     `${skill.name} ${skill.description} ${skill.tags.join(' ')}`.toLowerCase().includes(kw),
   )
 })
+
+/* —— 智能体关联反查 —— */
+
+/** 技能 id → 关联了该技能的智能体摘要列表（取合并视图当前生效名称；一个技能可被多个智能体关联） */
+const skillLinkedAgents = computed<Map<string, { id: string; name: string }[]>>(() => {
+  const map = new Map<string, { id: string; name: string }[]>()
+  for (const agent of agentsStore.agents) {
+    if (!agent.linkedSkillIds.length) continue
+    for (const skillId of agent.linkedSkillIds) {
+      const list = map.get(skillId) ?? []
+      list.push({ id: agent.id, name: agent.name })
+      map.set(skillId, list)
+    }
+  }
+  return map
+})
+
+/** 查询某技能被哪些智能体关联（用于卡片展示「随 {智能体名}」标注；未关联返回空数组） */
+function linkedAgents(skillId: string): { id: string; name: string }[] {
+  return skillLinkedAgents.value.get(skillId) ?? []
+}
 
 /* —— 卡片「更多」菜单（同屏只开一个；点外部 / Esc 关闭） —— */
 
@@ -239,6 +262,14 @@ function resetBuiltinFromModal(): void {
             <div class="skill-meta">
               <span v-if="skill.builtin" class="chip chip-builtin">内置</span>
               <span v-if="skill.customized" class="chip chip-modified">已修改</span>
+              <span
+                v-for="agent in linkedAgents(skill.id)"
+                :key="`linked-${agent.id}`"
+                class="chip chip-linked-agent"
+                :title="`该技能随智能体「${agent.name}」对话时自动装载`"
+              >
+                随 {{ agent.name }}
+              </span>
               <span class="chip" :class="skill.disabled ? 'chip-off' : 'chip-on'">
                 {{ skill.disabled ? '停用' : '启用' }}
               </span>
@@ -574,6 +605,12 @@ function resetBuiltinFromModal(): void {
 .chip-modified {
   background: var(--color-warning-soft);
   color: var(--color-warning);
+}
+
+/* 随智能体自动装载的关联提示徽标（纯展示，悬停 title 说明含义） */
+.chip-linked-agent {
+  background: var(--color-brand-soft);
+  color: var(--color-brand);
 }
 
 .chip-on {
