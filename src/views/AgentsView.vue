@@ -109,6 +109,8 @@ function createEmptyForm(): AgentFormState {
 const modalOpen = ref(false)
 /** 正在编辑的智能体 id；null 表示新建 */
 const editingId = ref<string | null>(null)
+/** 正在编辑的智能体快照（用于区分内置/自定义与是否已修改）；null 表示新建 */
+const editingAgent = ref<AgentView | null>(null)
 const form = ref<AgentFormState>(createEmptyForm())
 const formErrors = ref({ name: '', description: '', systemPrompt: '' })
 
@@ -122,15 +124,16 @@ const TAGS_SEPARATOR = '，'
 
 function openCreateModal(): void {
   editingId.value = null
+  editingAgent.value = null
   form.value = createEmptyForm()
   formErrors.value = { name: '', description: '', systemPrompt: '' }
   modalOpen.value = true
 }
 
-/** 打开编辑（仅自定义智能体可编辑） */
+/** 打开编辑弹窗（内置与自定义均可编辑；表单回填当前生效值，内置有覆盖时即覆盖值） */
 function openEditModal(agent: AgentView): void {
-  if (agent.builtin) return
   editingId.value = agent.id
+  editingAgent.value = agent
   form.value = {
     name: agent.name,
     description: agent.description,
@@ -177,10 +180,24 @@ function submitForm(): void {
     tags: parseTags(form.value.tags),
   }
   if (editingId.value) {
-    agentsStore.updateCustomAgent(editingId.value, payload)
+    // 内置走覆盖层写入，自定义直接改列表；两分支共用同一套表单校验
+    if (editingAgent.value?.builtin) {
+      agentsStore.updateBuiltinAgent(editingId.value, payload)
+    } else {
+      agentsStore.updateCustomAgent(editingId.value, payload)
+    }
   } else {
     agentsStore.addCustomAgent(payload)
   }
+  modalOpen.value = false
+}
+
+/** 恢复内置智能体的代码默认（清空覆盖层，二次确认后关闭弹窗） */
+function resetBuiltinFromModal(): void {
+  const agent = editingAgent.value
+  if (!agent?.builtin) return
+  if (!window.confirm('确定恢复该内置智能体的默认设置吗？当前修改将被清除。')) return
+  agentsStore.resetBuiltinAgent(agent.id)
   modalOpen.value = false
 }
 </script>
@@ -224,6 +241,7 @@ function submitForm(): void {
             <h2 class="agent-name">{{ agent.name }}</h2>
             <div class="agent-meta">
               <span v-if="agent.builtin" class="chip chip-builtin">内置</span>
+              <span v-if="agent.customized" class="chip chip-modified">已修改</span>
               <span class="chip" :class="agent.disabled ? 'chip-off' : 'chip-on'">
                 {{ agent.disabled ? '停用' : '启用' }}
               </span>
@@ -253,8 +271,7 @@ function submitForm(): void {
           <button
             class="btn btn-ghost btn-sm"
             type="button"
-            :disabled="agent.builtin"
-            :title="agent.builtin ? '内置智能体不支持编辑，可复制后修改' : '编辑智能体'"
+            title="编辑智能体"
             @click="openEditModal(agent)"
           >
             <AppIcon name="edit" />
@@ -372,6 +389,14 @@ function submitForm(): void {
           </label>
 
           <footer class="modal-foot">
+            <button
+              v-if="editingAgent?.customized"
+              class="btn btn-ghost modal-reset"
+              type="button"
+              @click="resetBuiltinFromModal"
+            >
+              恢复默认
+            </button>
             <button class="btn btn-ghost" type="button" @click="closeModal">取消</button>
             <button class="btn btn-primary" type="submit">保存</button>
           </footer>
@@ -555,6 +580,12 @@ function submitForm(): void {
 .chip-builtin {
   background: var(--color-brand-soft);
   color: var(--color-brand);
+}
+
+/* 已被覆盖层修改的内置智能体提示徽标 */
+.chip-modified {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
 }
 
 .chip-on {
@@ -745,5 +776,10 @@ function submitForm(): void {
   justify-content: flex-end;
   gap: var(--space-3);
   padding-top: var(--space-2);
+}
+
+/* 「恢复默认」靠左，与取消/保存分开 */
+.modal-reset {
+  margin-right: auto;
 }
 </style>

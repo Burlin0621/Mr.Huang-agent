@@ -7,6 +7,8 @@ import { BUILTIN_AGENTS, DEFAULT_AGENT_ID } from '@/lib/agents'
 const CUSTOM_AGENTS_KEY = 'mr-huang-agent:custom-agents'
 /** 停用的智能体 id 列表在 localStorage 中的持久化 key */
 const DISABLED_AGENTS_KEY = 'mr-huang-agent:disabled-agents'
+/** 内置智能体覆盖快照（id → 编辑内容）在 localStorage 中的持久化 key */
+const BUILTIN_OVERRIDES_KEY = 'mr-huang-agent:builtin-overrides'
 
 /** 图标缺省时的默认 emoji */
 export const DEFAULT_AGENT_ICON = '🤖'
@@ -24,6 +26,15 @@ export interface CustomAgentData {
 /** 新建/编辑自定义智能体时的入参（id 由 store 生成或按原 id 保留） */
 export type CustomAgentInput = Omit<CustomAgentData, 'id'>
 
+/** 内置智能体覆盖快照的持久化结构（编辑内置时保存的完整字段） */
+export interface BuiltinAgentOverride {
+  name: string
+  description: string
+  systemPrompt: string
+  icon: string
+  tags: string[]
+}
+
 /** 合并视图清单条目：内置与自定义统一结构 */
 export interface AgentView {
   id: string
@@ -32,8 +43,10 @@ export interface AgentView {
   systemPrompt: string
   icon: string
   tags: string[]
-  /** 是否内置智能体（内置不可删除、不可编辑） */
+  /** 是否内置智能体（内置不可删除，可通过覆盖层编辑展示字段） */
   builtin: boolean
+  /** 是否已被用户修改（内置且存在覆盖快照时 true；自定义恒为 false） */
+  customized: boolean
   /** 是否已停用（停用后不出现在 AI 对话的智能体浮层中） */
   disabled: boolean
 }
@@ -80,6 +93,40 @@ function readDisabledIds(): string[] {
   }
 }
 
+/** 校验 localStorage 中读出的条目是否为合法的内置覆盖快照 */
+function isValidBuiltinOverride(value: unknown): value is BuiltinAgentOverride {
+  if (typeof value !== 'object' || value === null) return false
+  const snapshot = value as Record<string, unknown>
+  return (
+    typeof snapshot.name === 'string' &&
+    typeof snapshot.description === 'string' &&
+    typeof snapshot.systemPrompt === 'string' &&
+    typeof snapshot.icon === 'string' &&
+    Array.isArray(snapshot.tags) &&
+    snapshot.tags.every((tag) => typeof tag === 'string')
+  )
+}
+
+/** 读取内置覆盖快照表；localStorage 不可用或数据损坏时回退空对象（仅保留内置 id 的有效条目） */
+function readBuiltinOverrides(): Record<string, BuiltinAgentOverride> {
+  try {
+    const raw = localStorage.getItem(BUILTIN_OVERRIDES_KEY)
+    if (!raw) return {}
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
+    const overrides: Record<string, BuiltinAgentOverride> = {}
+    for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!BUILTIN_AGENTS.some((agent) => agent.id === id)) continue
+      if (!isValidBuiltinOverride(value)) continue
+      overrides[id] = { ...value, tags: [...value.tags] }
+    }
+    return overrides
+  } catch {
+    // 数据损坏（非法 JSON 等）时回退空表
+    return {}
+  }
+}
+
 export const useAgentsStore = defineStore('agents', () => {
   /** 自定义智能体列表（持久化到 localStorage） */
   const customAgents = ref<CustomAgentData[]>(readCustomAgents())
@@ -87,21 +134,29 @@ export const useAgentsStore = defineStore('agents', () => {
   /** 停用的智能体 id 列表（持久化到 localStorage） */
   const disabledIds = ref<string[]>(readDisabledIds())
 
-  /** 合并视图清单：内置在前、自定义在后 */
+  /** 内置智能体覆盖快照表：id → 编辑内容（持久化到 localStorage） */
+  const builtinOverrides = ref<Record<string, BuiltinAgentOverride>>(readBuiltinOverrides())
+
+  /** 合并视图清单：内置在前、自定义在后；内置存在覆盖快照时用快照整体覆盖展示字段 */
   const agents = computed<AgentView[]>(() => [
-    ...BUILTIN_AGENTS.map((agent) => ({
-      id: agent.id,
-      name: agent.name,
-      description: agent.description,
-      systemPrompt: agent.systemPrompt,
-      icon: agent.icon ?? DEFAULT_AGENT_ICON,
-      tags: agent.tags ?? [],
-      builtin: true,
-      disabled: disabledIds.value.includes(agent.id),
-    })),
+    ...BUILTIN_AGENTS.map((agent) => {
+      const override = builtinOverrides.value[agent.id]
+      return {
+        id: agent.id,
+        name: override?.name ?? agent.name,
+        description: override?.description ?? agent.description,
+        systemPrompt: override?.systemPrompt ?? agent.systemPrompt,
+        icon: override?.icon ?? agent.icon ?? DEFAULT_AGENT_ICON,
+        tags: override ? [...override.tags] : [...(agent.tags ?? [])],
+        builtin: true,
+        customized: Boolean(override),
+        disabled: disabledIds.value.includes(agent.id),
+      }
+    }),
     ...customAgents.value.map((agent) => ({
       ...agent,
       builtin: false,
+      customized: false,
       disabled: disabledIds.value.includes(agent.id),
     })),
   ])
@@ -144,6 +199,25 @@ export const useAgentsStore = defineStore('agents', () => {
     return true
   }
 
+  /** 编辑内置智能体：写入/更新覆盖快照（id 非内置时忽略并返回 false） */
+  function updateBuiltinAgent(id: string, data: CustomAgentInput): boolean {
+    const isBuiltin = BUILTIN_AGENTS.some((agent) => agent.id === id)
+    if (!isBuiltin) return false
+    builtinOverrides.value = {
+      ...builtinOverrides.value,
+      [id]: { ...data, icon: data.icon.trim() || DEFAULT_AGENT_ICON, tags: [...data.tags] },
+    }
+    return true
+  }
+
+  /** 恢复内置智能体的代码默认：删除该 id 的覆盖快照 */
+  function resetBuiltinAgent(id: string): void {
+    if (!builtinOverrides.value[id]) return
+    const next = { ...builtinOverrides.value }
+    delete next[id]
+    builtinOverrides.value = next
+  }
+
   /** 删除自定义智能体（内置不可删除），并同步清理停用列表中的残留 id */
   function removeCustomAgent(id: string): void {
     customAgents.value = customAgents.value.filter((agent) => agent.id !== id)
@@ -177,7 +251,7 @@ export const useAgentsStore = defineStore('agents', () => {
       : [...disabledIds.value, id]
   }
 
-  // 两份状态变化 → 各自持久化到 localStorage（失败时静默降级，仅当前会话生效）
+  // 三份状态变化 → 各自持久化到 localStorage（失败时静默降级，仅当前会话生效）
   watch(customAgents, (next) => {
     try {
       localStorage.setItem(CUSTOM_AGENTS_KEY, JSON.stringify(next))
@@ -194,6 +268,14 @@ export const useAgentsStore = defineStore('agents', () => {
     }
   })
 
+  watch(builtinOverrides, (next) => {
+    try {
+      localStorage.setItem(BUILTIN_OVERRIDES_KEY, JSON.stringify(next))
+    } catch {
+      // 忽略持久化失败
+    }
+  })
+
   return {
     agents,
     enabledAgents,
@@ -202,6 +284,8 @@ export const useAgentsStore = defineStore('agents', () => {
     findAgent,
     addCustomAgent,
     updateCustomAgent,
+    updateBuiltinAgent,
+    resetBuiltinAgent,
     removeCustomAgent,
     duplicateAgent,
     toggleDisabled,
