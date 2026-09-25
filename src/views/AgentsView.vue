@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { DEFAULT_AGENT_ID } from '@/lib/agents'
@@ -22,6 +22,11 @@ const filteredAgents = computed<AgentView[]>(() => {
     `${agent.name} ${agent.description} ${agent.tags.join(' ')}`.toLowerCase().includes(kw),
   )
 })
+
+/* —— 卡片图片头像（加载失败时回退 emoji / 首字） —— */
+
+/** 图片头像加载失败的智能体 id 集合（@error 时记入，触发回退显示） */
+const failedAvatarIds = reactive(new Set<string>())
 
 /* —— 卡片「更多」菜单（同屏只开一个；点外部 / Esc 关闭） —— */
 
@@ -236,7 +241,16 @@ function resetBuiltinFromModal(): void {
         :class="{ 'is-disabled': agent.disabled }"
       >
         <div class="agent-card-head">
-          <span class="agent-avatar" aria-hidden="true">{{ agent.icon || agent.name.slice(0, 1) }}</span>
+          <span class="agent-avatar" aria-hidden="true">
+            <img
+              v-if="agent.avatar && !failedAvatarIds.has(agent.id)"
+              :src="agent.avatar"
+              :alt="agent.name"
+              class="agent-avatar-img"
+              @error="failedAvatarIds.add(agent.id)"
+            />
+            <template v-else>{{ agent.icon || agent.name.slice(0, 1) }}</template>
+          </span>
           <div class="agent-title-group">
             <h2 class="agent-name">{{ agent.name }}</h2>
             <div class="agent-meta">
@@ -519,6 +533,14 @@ function resetBuiltinFromModal(): void {
   background: var(--color-brand-soft);
   font-size: var(--font-size-xl);
   line-height: 1;
+}
+
+/* 图片头像：铺满色块，圆角随容器 */
+.agent-avatar-img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
 }
 
 .agent-title-group {

@@ -43,6 +43,8 @@ export interface AgentView {
   systemPrompt: string
   icon: string
   tags: string[]
+  /** 图片头像 URL（仅内置定义携带；覆盖层不修改此字段，自定义智能体恒为 undefined） */
+  avatar?: string
   /** 是否内置智能体（内置不可删除，可通过覆盖层编辑展示字段） */
   builtin: boolean
   /** 是否已被用户修改（内置且存在覆盖快照时 true；自定义恒为 false） */
@@ -147,6 +149,8 @@ export const useAgentsStore = defineStore('agents', () => {
         description: override?.description ?? agent.description,
         systemPrompt: override?.systemPrompt ?? agent.systemPrompt,
         icon: override?.icon ?? agent.icon ?? DEFAULT_AGENT_ICON,
+        // 图片头像始终取内置定义（覆盖层只改名称/描述/提示词等字段，不改头像）
+        avatar: agent.avatar,
         tags: override ? [...override.tags] : [...(agent.tags ?? [])],
         builtin: true,
         customized: Boolean(override),

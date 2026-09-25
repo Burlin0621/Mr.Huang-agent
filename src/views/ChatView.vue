@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
@@ -158,6 +158,9 @@ function clearGoal(): void {
 /* —— 智能体（内置 + 自定义合并清单，来自智能体中心 store） —— */
 
 const activeAgentId = ref<string>(DEFAULT_AGENT_ID)
+
+/** 图片头像加载失败的智能体 id 集合（@error 时记入，浮层回退 emoji 显示） */
+const failedAvatarIds = reactive(new Set<string>())
 
 /** 当前选中智能体：在合并清单中查找，找不到时回退通用助手 */
 const activeAgent = computed<AgentView>(
@@ -828,7 +831,16 @@ onBeforeUnmount(() => {
             type="button"
             @click="selectAgent(agent.id)"
           >
-            <span class="popover-agent-avatar" aria-hidden="true">{{ agent.icon }}</span>
+            <span class="popover-agent-avatar" aria-hidden="true">
+              <img
+                v-if="agent.avatar && !failedAvatarIds.has(agent.id)"
+                :src="agent.avatar"
+                :alt="agent.name"
+                class="popover-agent-img"
+                @error="failedAvatarIds.add(agent.id)"
+              />
+              <template v-else>{{ agent.icon }}</template>
+            </span>
             <span class="popover-item-main">
               <span class="popover-item-title">{{ agent.name }}</span>
               <span class="popover-item-desc">{{ agent.description }}</span>
@@ -1420,6 +1432,14 @@ onBeforeUnmount(() => {
   background: var(--color-brand-soft);
   font-size: var(--font-size-lg);
   line-height: 1;
+}
+
+/* 小尺寸图片头像（圆角方块，居中于色块） */
+.popover-agent-img {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
 }
 
 .popover-item-title {
