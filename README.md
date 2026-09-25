@@ -55,6 +55,13 @@ npm run verify:dev
 | `npm run format` | Prettier 格式化 `src` 下 `.ts` / `.vue` / `.css` |
 | `npm run verify:dev` | 校验开发服务器返回 200 且包含应用挂载点 |
 
+## 调试入口
+
+无需记忆命令：在项目根目录双击 **`启动调试.bat`** 即可启动开发服务器，浏览器会自动打开 http://localhost:5173。
+
+- 首次运行会自动安装依赖（需已安装 Node.js / npm，未检测到 npm 时脚本会给出安装地址）；
+- 关闭该命令行窗口即停止调试服务器。
+
 ## 目录结构
 
 ```
