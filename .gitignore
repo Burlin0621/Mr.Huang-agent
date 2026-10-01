@@ -17,3 +17,6 @@ npm-debug.log*
 *_out.txt
 *.log
 
+
+# ZCode 本地工具产物
+.zcode/
