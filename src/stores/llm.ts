@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
+import { storageGet, storageSet } from '@/lib/storage'
 
 /** 一套模型配置（OpenAI 兼容端点 + 采样参数） */
 export interface LlmConfig {
@@ -17,6 +18,8 @@ export interface LlmConfig {
   temperature: number
   timeoutSeconds: number
   maxRetries: number
+  /** 是否支持视觉（图片输入）：发送图片附件时据此提示用户（未勾选仅提示不阻止） */
+  supportsVision: boolean
 }
 
 const CONFIGS_STORAGE_KEY = 'mr-huang-agent:llm-configs'
@@ -45,6 +48,7 @@ export function createDefaultConfigDraft(): LlmConfig {
     temperature: DEFAULT_TEMPERATURE,
     timeoutSeconds: DEFAULT_TIMEOUT_SECONDS,
     maxRetries: DEFAULT_MAX_RETRIES,
+    supportsVision: false,
   }
 }
 
@@ -70,7 +74,7 @@ export function normalizeModelIds(rawModelIds: unknown, fallbackModelId: unknown
 /** 读取持久化的配置列表，逐条做防御性归一化（坏数据直接丢弃） */
 export function loadConfigs(): LlmConfig[] {
   try {
-    const raw = localStorage.getItem(CONFIGS_STORAGE_KEY)
+    const raw = storageGet(CONFIGS_STORAGE_KEY)
     if (!raw) return []
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
@@ -96,6 +100,7 @@ export function loadConfigs(): LlmConfig[] {
           clampNumber(record.timeoutSeconds, 1, 3600, DEFAULT_TIMEOUT_SECONDS),
         ),
         maxRetries: Math.round(clampNumber(record.maxRetries, 0, 5, DEFAULT_MAX_RETRIES)),
+        supportsVision: record.supportsVision === true,
       })
     }
     return configs
@@ -106,7 +111,7 @@ export function loadConfigs(): LlmConfig[] {
 
 function loadActiveId(): string {
   try {
-    return localStorage.getItem(ACTIVE_STORAGE_KEY) ?? ''
+    return storageGet(ACTIVE_STORAGE_KEY) ?? ''
   } catch {
     return ''
   }
@@ -114,7 +119,7 @@ function loadActiveId(): string {
 
 function persistTo(key: string, value: string): void {
   try {
-    localStorage.setItem(key, value)
+    storageSet(key, value)
   } catch {
     // localStorage 不可用时静默降级（仅当前会话生效）
   }

@@ -5,13 +5,13 @@ import globals from 'globals'
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  // 全局忽略：依赖与构建产物
-  { ignores: ['node_modules/', 'dist/', 'dist-ssr/'] },
+  // 全局忽略：依赖、构建产物与素材预览临时目录（.avatar-preview 为本地验图脚本，非项目代码）
+  { ignores: ['node_modules/', 'dist/', 'dist-ssr/', '.avatar-preview/'] },
 
   // 普通 JS（Node 环境的脚本与配置文件）
   {
     ...js.configs.recommended,
-    files: ['**/*.{js,mjs}'],
+    files: ['**/*.{js,mjs,cjs}'],
     languageOptions: {
       globals: { ...globals.node },
     },
@@ -19,6 +19,28 @@ export default tseslint.config(
 
   // TypeScript（src 与根目录配置）
   ...tseslint.configs.recommended,
+
+  // Electron 主进程 / preload（CommonJS，require 是必需的；需在 tseslint 配置之后覆盖）
+  {
+    files: ['electron/**/*.cjs'],
+    languageOptions: {
+      globals: { ...globals.node },
+    },
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+    },
+  },
+
+  // scripts 下的 Node 冒烟/验证脚本（CommonJS，require 是必需的）
+  {
+    files: ['scripts/**/*.cjs'],
+    languageOptions: {
+      globals: { ...globals.node },
+    },
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+    },
+  },
 
   // Vue 3（flat/recommended 含模板规则）
   ...pluginVue.configs['flat/recommended'],

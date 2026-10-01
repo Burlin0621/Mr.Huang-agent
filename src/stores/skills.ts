@@ -2,6 +2,8 @@ import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 
 import { BUILTIN_SKILLS } from '@/lib/skills'
+import type { SkillScript } from '@/lib/skill-package'
+import { storageGet, storageSet } from '@/lib/storage'
 
 /** 自定义技能在 localStorage 中的持久化 key */
 const CUSTOM_SKILLS_KEY = 'mr-huang-agent:custom-skills'
@@ -15,20 +17,45 @@ const REMOVED_SKILLS_KEY = 'mr-huang-agent:removed-skills'
 /** 图标缺省时的默认 emoji */
 export const DEFAULT_SKILL_ICON = '⚡'
 
-/** 自定义技能的持久化数据结构 */
+/** 自定义技能的持久化数据结构（技能包：SKILL.md 字段 + scripts/ 脚本） */
 export interface CustomSkillData {
   id: string
   name: string
   description: string
+  /** 技能正文指令（SKILL.md frontmatter 之后的 Markdown 正文） */
   template: string
   icon: string
   tags: string[]
+  /** 触发词：用户消息命中后自动注入正文 */
+  triggers: string[]
+  /** 技能脚本（scripts/ 目录文件，激活后告知模型经 fs_write + shell_exec 落盘执行） */
+  scripts: SkillScript[]
+  /** 来源标记（manual=手工创建 / import=导入 / builtin=内置，仅展示用） */
+  source?: 'manual' | 'import' | 'builtin'
   /** SkillHub 来源标记（合集包导入时用于查重；手工创建的技能没有该字段） */
   skillhubId?: string
 }
 
-/** 新建/编辑自定义技能时的入参（id 由 store 生成或按原 id 保留） */
-export type CustomSkillInput = Omit<CustomSkillData, 'id'>
+/** 新建/编辑自定义技能时的入参（id 由 store 生成或按原 id 保留；triggers/scripts 缺省时自动兜底） */
+export type CustomSkillInput = Omit<CustomSkillData, 'id' | 'triggers' | 'scripts'> & {
+  triggers?: string[]
+  scripts?: SkillScript[]
+}
+
+/** 入参兜底：triggers 缺省回退标签，scripts 缺省为空 */
+function normalizeSkillInput(
+  data: CustomSkillInput,
+): Pick<CustomSkillData, 'name' | 'description' | 'template' | 'icon' | 'tags' | 'triggers' | 'scripts'> {
+  return {
+    name: data.name,
+    description: data.description,
+    template: data.template,
+    icon: data.icon.trim() || DEFAULT_SKILL_ICON,
+    tags: [...data.tags],
+    triggers: data.triggers ? [...data.triggers] : [...data.tags],
+    scripts: (data.scripts ?? []).map((script) => ({ filename: script.filename, content: script.content })),
+  }
+}
 
 /** 内置技能覆盖快照的持久化结构（编辑内置时保存的完整字段） */
 export interface BuiltinSkillOverride {
@@ -37,6 +64,8 @@ export interface BuiltinSkillOverride {
   template: string
   icon: string
   tags: string[]
+  triggers?: string[]
+  scripts?: SkillScript[]
 }
 
 /** 合并视图清单条目：内置与自定义统一结构 */
@@ -47,12 +76,18 @@ export interface SkillView {
   template: string
   icon: string
   tags: string[]
+  /** 触发词（内置缺省回退标签；自定义缺省已兜底为标签） */
+  triggers: string[]
+  /** 技能脚本清单（技能包 scripts/ 文件） */
+  scripts: SkillScript[]
   /** 是否内置技能（内置不可删除，可通过覆盖层编辑展示字段） */
   builtin: boolean
   /** 是否已被用户修改（内置且存在覆盖快照时 true；自定义恒为 false） */
   customized: boolean
   /** 是否已停用（停用后不出现在 AI 对话的技能浮层中） */
   disabled: boolean
+  /** SkillHub 来源标记（仅自定义技能可能有；市场/合集包导入时用于查重与来源展示） */
+  skillhubId?: string
 }
 
 /** 校验 localStorage 中读出的条目是否为合法的自定义技能 */
@@ -73,11 +108,20 @@ function isValidCustomSkill(value: unknown): value is CustomSkillData {
 /** 读取自定义技能列表；localStorage 不可用或数据损坏时回退空数组 */
 function readCustomSkills(): CustomSkillData[] {
   try {
-    const raw = localStorage.getItem(CUSTOM_SKILLS_KEY)
+    const raw = storageGet(CUSTOM_SKILLS_KEY)
     if (!raw) return []
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
-    return parsed.filter(isValidCustomSkill).map((skill) => ({ ...skill, tags: [...skill.tags] }))
+    return parsed.filter(isValidCustomSkill).map((skill) => ({
+      ...skill,
+      tags: [...skill.tags],
+      // 旧数据（纯提示词模板时代）无 triggers / scripts 字段：读取时兜底，向后兼容
+      triggers: skill.triggers ? [...skill.triggers] : [...skill.tags],
+      scripts: (skill.scripts ?? []).map((script) => ({
+        filename: script.filename,
+        content: script.content,
+      })),
+    }))
   } catch {
     // 数据损坏（非法 JSON 等）时回退空列表
     return []
@@ -87,7 +131,7 @@ function readCustomSkills(): CustomSkillData[] {
 /** 读取停用的技能 id 列表；异常时回退空数组 */
 function readDisabledIds(): string[] {
   try {
-    const raw = localStorage.getItem(DISABLED_SKILLS_KEY)
+    const raw = storageGet(DISABLED_SKILLS_KEY)
     if (!raw) return []
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
@@ -114,7 +158,7 @@ function isValidBuiltinOverride(value: unknown): value is BuiltinSkillOverride {
 /** 读取内置覆盖快照表；localStorage 不可用或数据损坏时回退空对象（仅保留内置 id 的有效条目） */
 function readBuiltinOverrides(): Record<string, BuiltinSkillOverride> {
   try {
-    const raw = localStorage.getItem(BUILTIN_OVERRIDES_KEY)
+    const raw = storageGet(BUILTIN_OVERRIDES_KEY)
     if (!raw) return {}
     const parsed: unknown = JSON.parse(raw)
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
@@ -134,7 +178,7 @@ function readBuiltinOverrides(): Record<string, BuiltinSkillOverride> {
 /** 读取被移除的内置技能 id 列表；异常时回退空数组（仅保留内置清单中的有效 id，与覆盖表清理策略一致） */
 function readRemovedIds(): string[] {
   try {
-    const raw = localStorage.getItem(REMOVED_SKILLS_KEY)
+    const raw = storageGet(REMOVED_SKILLS_KEY)
     if (!raw) return []
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
@@ -173,6 +217,8 @@ export const useSkillsStore = defineStore('skills', () => {
           template: override?.template ?? skill.template,
           icon: override?.icon ?? skill.icon ?? DEFAULT_SKILL_ICON,
           tags: override ? [...override.tags] : [...(skill.tags ?? [])],
+          triggers: override?.triggers ?? skill.triggers ?? [...(skill.tags ?? [])],
+          scripts: override?.scripts ?? [],
           builtin: true,
           customized: Boolean(override),
           disabled: disabledIds.value.includes(skill.id),
@@ -180,10 +226,13 @@ export const useSkillsStore = defineStore('skills', () => {
       }),
       ...customSkills.value.map((skill) => ({
         ...skill,
-        builtin: false,
-        customized: false,
-        disabled: disabledIds.value.includes(skill.id),
-      })),
+        triggers: [...skill.triggers],
+        scripts: skill.scripts.map((script) => ({ ...script })),
+          builtin: false,
+          customized: false,
+          disabled: disabledIds.value.includes(skill.id),
+          skillhubId: skill.skillhubId,
+        })),
     ]
   })
 
@@ -201,13 +250,10 @@ export const useSkillsStore = defineStore('skills', () => {
     return skills.value.find((skill) => skill.id === id)
   }
 
-  /** 新建自定义技能，返回生成的 id（新建即为启用态） */
+  /** 新建自定义技能，返回生成的 id（新建即为启用态；source 标记 manual） */
   function addCustomSkill(data: CustomSkillInput): string {
     const id = crypto.randomUUID()
-    customSkills.value = [
-      ...customSkills.value,
-      { ...data, icon: data.icon.trim() || DEFAULT_SKILL_ICON, tags: [...data.tags], id },
-    ]
+    customSkills.value = [...customSkills.value, { ...normalizeSkillInput(data), source: data.source ?? 'manual', skillhubId: data.skillhubId, id }]
     return id
   }
 
@@ -216,13 +262,13 @@ export const useSkillsStore = defineStore('skills', () => {
     return customSkills.value.some((skill) => skill.skillhubId === skillhubId)
   }
 
-  /** 编辑自定义技能；id 不存在时返回 false */
+  /** 编辑自定义技能；id 不存在时返回 false（保留原 source / skillhubId 标记） */
   function updateCustomSkill(id: string, data: CustomSkillInput): boolean {
     const exists = customSkills.value.some((skill) => skill.id === id)
     if (!exists) return false
     customSkills.value = customSkills.value.map((skill) =>
       skill.id === id
-        ? { ...data, icon: data.icon.trim() || DEFAULT_SKILL_ICON, tags: [...data.tags], id }
+        ? { ...skill, ...normalizeSkillInput(data) }
         : skill,
     )
     return true
@@ -234,7 +280,7 @@ export const useSkillsStore = defineStore('skills', () => {
     if (!isBuiltin) return false
     builtinOverrides.value = {
       ...builtinOverrides.value,
-      [id]: { ...data, icon: data.icon.trim() || DEFAULT_SKILL_ICON, tags: [...data.tags] },
+      [id]: { ...normalizeSkillInput(data) },
     }
     return true
   }
@@ -245,6 +291,25 @@ export const useSkillsStore = defineStore('skills', () => {
     const next = { ...builtinOverrides.value }
     delete next[id]
     builtinOverrides.value = next
+  }
+
+  /** 查找某合集智能体自带的技能 id 列表：合集包安装时技能的 skillhubId 以「智能体 skillhubId + 冒号」为前缀，据此前缀匹配；入参为空时安全返回空数组 */
+  function findBundledSkillIds(agentSkillhubId: string): string[] {
+    if (!agentSkillhubId) return []
+    const prefix = `${agentSkillhubId}:`
+    return customSkills.value
+      .filter((skill) => typeof skill.skillhubId === 'string' && skill.skillhubId.startsWith(prefix))
+      .map((skill) => skill.id)
+  }
+
+  /** 批量删除自定义技能（按 id 列表），返回实际删除数量；与逐个 removeCustomSkill 行为一致：无论技能是否存在，都同步清理停用列表中的残留 id */
+  function removeCustomSkillsByIds(ids: string[]): number {
+    if (ids.length === 0) return 0
+    const idSet = new Set(ids)
+    const before = customSkills.value.length
+    customSkills.value = customSkills.value.filter((skill) => !idSet.has(skill.id))
+    disabledIds.value = disabledIds.value.filter((disabledId) => !idSet.has(disabledId))
+    return before - customSkills.value.length
   }
 
   /** 删除自定义技能（内置不可删除），并同步清理停用列表中的残留 id */
@@ -283,6 +348,9 @@ export const useSkillsStore = defineStore('skills', () => {
         template: source.template,
         icon: source.icon,
         tags: [...source.tags],
+        triggers: [...source.triggers],
+        scripts: source.scripts.map((script) => ({ ...script })),
+        source: 'manual',
       },
     ]
     return newId
@@ -298,7 +366,7 @@ export const useSkillsStore = defineStore('skills', () => {
   // 四份状态变化 → 各自持久化到 localStorage（失败时静默降级，仅当前会话生效）
   watch(customSkills, (next) => {
     try {
-      localStorage.setItem(CUSTOM_SKILLS_KEY, JSON.stringify(next))
+      storageSet(CUSTOM_SKILLS_KEY, JSON.stringify(next))
     } catch {
       // 忽略持久化失败
     }
@@ -306,7 +374,7 @@ export const useSkillsStore = defineStore('skills', () => {
 
   watch(disabledIds, (next) => {
     try {
-      localStorage.setItem(DISABLED_SKILLS_KEY, JSON.stringify(next))
+      storageSet(DISABLED_SKILLS_KEY, JSON.stringify(next))
     } catch {
       // 忽略持久化失败
     }
@@ -314,7 +382,7 @@ export const useSkillsStore = defineStore('skills', () => {
 
   watch(builtinOverrides, (next) => {
     try {
-      localStorage.setItem(BUILTIN_OVERRIDES_KEY, JSON.stringify(next))
+      storageSet(BUILTIN_OVERRIDES_KEY, JSON.stringify(next))
     } catch {
       // 忽略持久化失败
     }
@@ -322,7 +390,7 @@ export const useSkillsStore = defineStore('skills', () => {
 
   watch(removedIds, (next) => {
     try {
-      localStorage.setItem(REMOVED_SKILLS_KEY, JSON.stringify(next))
+      storageSet(REMOVED_SKILLS_KEY, JSON.stringify(next))
     } catch {
       // 忽略持久化失败
     }
@@ -340,6 +408,8 @@ export const useSkillsStore = defineStore('skills', () => {
     updateBuiltinSkill,
     resetBuiltinSkill,
     removeCustomSkill,
+    findBundledSkillIds,
+    removeCustomSkillsByIds,
     removeBuiltinSkill,
     restoreRemovedSkills,
     duplicateSkill,

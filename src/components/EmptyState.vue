@@ -8,7 +8,8 @@ defineProps<{
 <template>
   <div class="empty-state">
     <svg class="empty-art" viewBox="0 0 160 116" aria-hidden="true">
-      <rect class="art-frame" x="26" y="12" width="108" height="88" rx="12" />
+      <circle class="art-dot" cx="22" cy="24" r="6" />
+      <rect class="art-frame" x="26" y="12" width="108" height="88" rx="14" />
       <path class="art-lines" d="M52 44h56M52 62h40" />
       <circle class="art-badge" cx="118" cy="88" r="19" />
       <path class="art-check" d="M110 88l5.5 5.5L127 83" />
@@ -37,6 +38,10 @@ defineProps<{
   margin-bottom: var(--space-2);
 }
 
+.art-dot {
+  fill: var(--color-brand-accent); /* 几何点缀：品牌黄圆点，低干扰 */
+}
+
 .art-frame {
   fill: var(--color-surface-muted);
   stroke: var(--color-border-strong);
@@ -52,12 +57,12 @@ defineProps<{
 }
 
 .art-badge {
-  fill: var(--color-brand-soft);
+  fill: var(--color-brand); /* 徽章实底品牌橙，深浅主题各自取对应提亮值 */
 }
 
 .art-check {
   fill: none;
-  stroke: var(--color-brand);
+  stroke: var(--color-on-brand); /* 勾随 on-brand 令牌自适应（浅色白 / 深色深棕） */
   stroke-width: 3.5;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -65,7 +70,7 @@ defineProps<{
 
 .empty-title {
   font-size: var(--font-size-lg);
-  font-weight: 600;
+  font-weight: var(--font-weight-display);
 }
 
 .empty-desc {

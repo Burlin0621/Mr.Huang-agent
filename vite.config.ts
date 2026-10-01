@@ -38,6 +38,57 @@ function readRequestBody(req: { method?: string } & AsyncIterable<Uint8Array>): 
   })
 }
 
+/** undici/Node 系统错误的形状：除标准字段外可能携带 code（如 ECONNREFUSED） */
+interface CauseErrorLike extends Error {
+  code?: unknown
+}
+
+/** 连接类错误码：目标服务未启动、域名解析失败、连接超时等 */
+const CONNECTION_ERROR_CODES = new Set([
+  'EAI_AGAIN',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ENOTFOUND',
+  'ETIMEDOUT',
+  'UND_ERR_CONNECT_TIMEOUT',
+])
+
+/** 证书类错误码：自签、过期或不受信任的 HTTPS 证书 */
+const CERT_ERROR_CODES = new Set([
+  'CERT_HAS_EXPIRED',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'ERR_TLS_CERT_ALTNAME_INVALID',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+])
+
+/**
+ * Node fetch 失败时 err.message 往往只有 "fetch failed"，真实原因藏在 err.cause 里，
+ * 此处从 unknown 中安全取出 cause 的 code 与 message（只做局部形状收窄，不用 any）
+ */
+function extractFetchCause(err: unknown): { code?: string; message?: string } {
+  if (!(err instanceof Error) || !(err.cause instanceof Error)) return {}
+  const cause = err.cause as CauseErrorLike
+  return {
+    code: typeof cause.code === 'string' ? cause.code : undefined,
+    // cause.message 可能携带多行堆栈信息，仅保留首行关键描述
+    message: cause.message.split('\n')[0] || undefined,
+  }
+}
+
+/** 按错误码归类，给出一句可操作的排查建议 */
+function suggestForErrorCode(code: string | undefined): string {
+  if (code && CONNECTION_ERROR_CODES.has(code)) {
+    return '请确认目标服务已启动、baseUrl 地址与端口正确'
+  }
+  if (code && CERT_ERROR_CODES.has(code)) {
+    return '如为 https 自签/过期证书可检查证书配置'
+  }
+  return '请检查网络连接与目标服务地址是否可达'
+}
+
 async function handleLlmProxy(
   req: {
     method?: string
@@ -102,9 +153,14 @@ async function handleLlmProxy(
       signal: upstreamAbort.signal,
     })
   } catch (err) {
+    // err.message 通常只有 "fetch failed"，优先从 err.cause 提取具体原因（如 ECONNREFUSED）
+    const { code, message: causeMessage } = extractFetchCause(err)
+    const detail = code
+      ? [code, causeMessage].filter(Boolean).join('：')
+      : (causeMessage ?? (err instanceof Error ? err.message : String(err)))
     sendJsonError(
       502,
-      `开发代理无法连接目标接口服务（${target}）：${err instanceof Error ? err.message : String(err)}`,
+      `开发代理无法连接目标接口服务（${target}）：${detail}。${suggestForErrorCode(code)}`,
       'network',
     )
     return

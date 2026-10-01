@@ -5,49 +5,89 @@
    - [data-theme="dark"]   深色主题（通过 html 根元素的 data-theme 属性启用）
    - 令牌范围：颜色 / 圆角 / 间距 / 字体 / 阴影 / 动效 / 布局尺寸
    - 组件样式一律引用令牌，禁止写死颜色值，保证深浅色主题完全可控
+
+   配色体系（v4 · 「不懒小熊」品牌视觉手册 · 暖中性阶定案）
+   --------------------------------------------------------------------------
+   1. 主行动色为品牌橙 #FF6A00（brand 色阶）：主按钮、选中态、焦点环、
+      用户气泡全部从该色阶取色；--color-brand / strong / deep / soft 为
+      兼容别名，分别指向色阶中的 500 / 600 / 700 / 50。
+   2. 信息色为品牌蓝 #006BFF（info 色阶）：链接类徽标、信息类标签、
+      次级强调从这里取色；行动 / 选中语义一律保持橙，二者不混用。
+   3. 中性阶全部同一暖色相（hue≈25，饱和度≤6%），明度严格递进且台阶均衡：
+      侧边栏（暖调近黑 #1b1713）→ 页面背景 → 内嵌底 → 卡片表面 → 边框 → 文字。
+      侧边栏不再是纯黑 #101010，与暖灰/米色阶同色温，消除三段色相断层。
+   4. 语义色（成功/警告/危险）统一饱和度与明度节奏，并成对提供
+      实色（文字/图标/实底）与 soft（浅底）两个层级；警告文字色用
+      深化的 #B45309 保证可读性，品牌黄 #FFB400 仅作 accent / 装饰。
+   5. 深色主题拥有自己的暖灰阶层次（侧边栏 #0f0c0a 最暗 → 背景 → 表面 →
+      浮起），品牌橙整体提亮为 #ff8a33 系、信息蓝提亮为 #5c9bff 系，
+      是独立推导的同等主题，非浅色的简单反色。
+   6. 字体层级以 800 字重的 display 层级为顶（--font-weight-display），
+      承接品牌手册的 Heavy 大字重语言。
+   7. 动效：所有颜色过渡统一使用 --transition-fast / --transition-theme
+      （内置同一缓动曲线），保证 hover/active/focus/主题切换节奏一致。
    ========================================================================== */
 
 :root {
   color-scheme: light;
 
-  /* —— 颜色 · 页面与表面 —— */
-  --color-bg: #f3f5fa;
-  --color-surface: #ffffff;
-  --color-surface-muted: #edf0f8;
-  --color-border: #dfe3ee;
-  --color-border-strong: #c8cfdf;
+  /* —— 颜色 · 中性灰阶（暖色相 hue≈25，明度平滑递进，台阶均衡） —— */
+  --color-bg: #f5f3f0;            /* 页面背景（L≈96） */
+  --color-surface: #fffefc;       /* 卡片 / 浮层表面（最亮，极轻暖白） */
+  --color-surface-muted: #eceae6; /* 内嵌底 / hover 填充 / 次级面板（L≈93） */
+  --color-border: #e4e1dc;        /* 常规边框（卡片边界的第一层表达） */
+  --color-border-strong: #d2cec7; /* 强边框 / 输入框描边 / 滚动条 */
 
-  /* —— 颜色 · 文字 —— */
-  --color-text: #20283c;
-  --color-text-secondary: #5a6480;
-  --color-text-muted: #8d95ab;
+  /* —— 颜色 · 文字（暖近黑系，均对 bg 达标） —— */
+  --color-text: #1c1917;
+  --color-text-secondary: #57534e;
+  --color-text-muted: #78716c;    /* 对 #f5f3f0 对比 ≥ 4.5:1 */
 
-  /* —— 颜色 · 品牌 —— */
-  --color-brand: #3f62f6;
-  --color-brand-strong: #3250dc;
-  --color-brand-soft: #e7edfe;
-  --color-on-brand: #ffffff;
+  /* —— 颜色 · 品牌橙（行动色，唯一行动色阶） —— */
+  --color-brand-50: #fff1e8;      /* 选中底 / 气泡浅底 / 徽标底 */
+  --color-brand-100: #ffe0cc;     /* 选中底加深（hover on soft） */
+  --color-brand-200: #ffc199;     /* 软描边 / 焦点环淡色 */
+  --color-brand-500: #ff6a00;     /* 主色：主按钮 / 用户气泡 / 链接 / 焦点环 */
+  --color-brand-600: #e85f00;     /* 主按钮 hover / 强调描边 */
+  --color-brand-700: #c95400;     /* 主按钮 active / 按压态 */
+  /* 兼容别名：现有组件继续引用旧名，值统一收敛到上面的色阶 */
+  --color-brand: var(--color-brand-500);
+  --color-brand-strong: var(--color-brand-600);
+  --color-brand-deep: var(--color-brand-700);
+  --color-brand-soft: var(--color-brand-50);
+  --color-on-brand: #ffffff;      /* 橙底恒用白字（按钮字重 600 保证可读） */
+  --color-brand-accent: #ffb400;  /* 品牌黄：Logo 渐变辅助色（橙→黄） */
+  --color-on-accent: #ffffff;     /* 高饱和实底上的文字（Logo、停止按钮等，两主题恒为白） */
 
-  /* —— 颜色 · 语义 —— */
-  --color-success: #189a55;
-  --color-success-soft: #e2f6ea;
-  --color-warning: #c87a06;
-  --color-warning-soft: #fcf0da;
-  --color-danger: #d43d3d;
-  --color-danger-soft: #fce9e9;
+  /* —— 颜色 · 信息蓝（信息色：链接类徽标 / 信息标签 / 次级强调） —— */
+  --color-info-500: #006bff;      /* 信息实色 / 链接类徽标文字 */
+  --color-info-600: #0057d1;      /* 信息强调 / hover */
+  --color-info-soft: #e6efff;     /* 信息浅底 */
 
-  /* —— 侧边栏 —— */
-  --sidebar-bg: #182138;
-  --sidebar-border: rgba(255, 255, 255, 0.08);
-  --sidebar-text: #c4cbdd;
-  --sidebar-text-muted: #7e88a3;
-  --sidebar-hover-bg: rgba(255, 255, 255, 0.06);
-  --sidebar-active-bg: rgba(63, 98, 246, 0.24);
+  /* —— 颜色 · 语义（实色 + soft 浅底成对；微调为暖协调） —— */
+  --color-success: #16a34a;
+  --color-success-soft: #ddf3e4;
+  --color-warning: #b45309;       /* 警告文字用深化棕橙保证可读，品牌黄仅作装饰 */
+  --color-warning-soft: #f9efdb;
+  --color-danger: #e5484d;
+  --color-danger-strong: #c73a3f; /* 危险实底的 hover / 按压态 */
+  --color-danger-soft: #fdeaea;
+
+  /* —— 侧边栏（暖调近黑 #1b1713，与页面暖灰阶同色温，消除三段断层） —— */
+  --sidebar-bg: #1b1713;          /* 全局最暗端（暖近黑） */
+  --sidebar-border: rgba(255, 255, 255, 0.14); /* 过渡线：侧边栏 → 页面 */
+  --sidebar-text: #e8e2da;        /* 对 #1b1713 对比 ≥ 7:1 */
+  --sidebar-text-muted: #a89f93;  /* 对 #1b1713 对比 ≥ 4.5:1 */
+  --sidebar-hover-bg: rgba(255, 255, 255, 0.08);
+  --sidebar-active-bg: rgba(255, 106, 0, 0.30); /* 品牌橙 500 的透明化应用 */
   --sidebar-active-text: #ffffff;
 
   /* —— 顶栏 —— */
-  --topbar-bg: rgba(255, 255, 255, 0.85);
+  --topbar-bg: rgba(255, 254, 252, 0.85);
   --topbar-border: var(--color-border);
+
+  /* —— 遮罩（模态 / 抽屉共用，两主题统一） —— */
+  --overlay-bg: rgba(28, 25, 23, 0.52);
 
   /* —— 圆角 —— */
   --radius-sm: 6px;
@@ -77,15 +117,18 @@
   --font-size-lg: 16px;
   --font-size-xl: 20px;
   --font-size-2xl: 26px;
+  --font-size-3xl: 30px;
+  --font-weight-display: 800;     /* 品牌手册 Heavy 大字重：页面主标题 / 空状态标语 */
 
-  /* —— 阴影 —— */
-  --shadow-sm: 0 1px 2px rgba(24, 33, 56, 0.06), 0 1px 3px rgba(24, 33, 56, 0.05);
-  --shadow-md: 0 6px 16px rgba(24, 33, 56, 0.09);
-  --shadow-lg: 0 16px 40px rgba(24, 33, 56, 0.16);
+  /* —— 阴影（与文字同色相的暖中性投影，极轻，仅用于表达浮起） —— */
+  --shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.05), 0 1px 3px rgba(28, 25, 23, 0.05);
+  --shadow-md: 0 6px 16px rgba(28, 25, 23, 0.08);
+  --shadow-lg: 0 16px 40px rgba(28, 25, 23, 0.14);
 
-  /* —— 动效 —— */
-  --transition-fast: 150ms ease;
-  --transition-theme: 220ms ease;
+  /* —— 动效（颜色过渡统一时间与缓动） —— */
+  --ease-out-soft: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --transition-fast: 150ms var(--ease-out-soft);   /* hover / active / focus */
+  --transition-theme: 240ms var(--ease-out-soft);  /* 深浅主题切换 */
 
   /* —— 布局尺寸 —— */
   --sidebar-width: 244px;
@@ -96,40 +139,65 @@
 [data-theme='dark'] {
   color-scheme: dark;
 
-  --color-bg: #121623;
-  --color-surface: #1a2032;
-  --color-surface-muted: #232a3f;
-  --color-border: #2d3550;
-  --color-border-strong: #3d4763;
+  /* —— 颜色 · 中性灰阶（自有暖调暗色层次：侧边栏最暗 → 背景 → 表面 → 浮起） —— */
+  --color-bg: #161311;            /* 页面背景 */
+  --color-surface: #1e1a17;       /* 卡片 / 浮层表面（比背景浮起一级） */
+  --color-surface-muted: #28231f; /* 内嵌底 / hover 填充 */
+  --color-border: #322c27;
+  --color-border-strong: #47403a;
 
-  --color-text: #e9ecf6;
-  --color-text-secondary: #a6aec7;
-  --color-text-muted: #737d99;
+  --color-text: #f0ece7;
+  --color-text-secondary: #b6afa6;
+  --color-text-muted: #857d73;
 
-  --color-brand: #6d87ff;
-  --color-brand-strong: #8599ff;
-  --color-brand-soft: rgba(109, 135, 255, 0.16);
-  --color-on-brand: #0c1122;
+  /* —— 颜色 · 品牌橙（暗色下提亮为 #ff8a33 系；hover 更亮、active 更深） —— */
+  --color-brand-50: rgba(255, 138, 51, 0.14); /* 选中底 / 浅底 */
+  --color-brand-100: rgba(255, 138, 51, 0.22);
+  --color-brand-200: rgba(255, 138, 51, 0.34);
+  --color-brand-500: #ff8a33;     /* 主色 */
+  --color-brand-600: #ff9d57;     /* hover（暗色下向亮走） */
+  --color-brand-700: #e87418;     /* active / 按压态 */
+  /* 兼容别名 */
+  --color-brand: var(--color-brand-500);
+  --color-brand-strong: var(--color-brand-600);
+  --color-brand-deep: var(--color-brand-700);
+  --color-brand-soft: var(--color-brand-50);
+  --color-on-brand: #241000;      /* 亮橙实底上用深棕文字保证对比 */
+  --color-brand-accent: #ffb84d;  /* 品牌黄（暗色提亮） */
+  --color-on-accent: #241000;
 
-  --color-success: #3fd08f;
-  --color-success-soft: rgba(63, 208, 143, 0.14);
-  --color-warning: #f2b23e;
-  --color-warning-soft: rgba(242, 178, 62, 0.14);
-  --color-danger: #f37f7f;
-  --color-danger-soft: rgba(243, 127, 127, 0.14);
+  /* —— 颜色 · 信息蓝（暗色下提亮为 #5c9bff 系） —— */
+  --color-info-500: #5c9bff;
+  --color-info-600: #82b3ff;
+  --color-info-soft: rgba(92, 155, 255, 0.16);
 
-  --sidebar-bg: #101422;
-  --sidebar-border: rgba(255, 255, 255, 0.06);
-  --sidebar-text: #b9c1d6;
-  --sidebar-text-muted: #6d7793;
-  --sidebar-hover-bg: rgba(255, 255, 255, 0.05);
-  --sidebar-active-bg: rgba(109, 135, 255, 0.2);
+  /* —— 颜色 · 语义（暗色下实色提亮用于文字/图标，strong 仍可作实底） —— */
+  --color-success: #46cf90;
+  --color-success-soft: rgba(70, 207, 144, 0.14);
+  --color-warning: #eab04d;
+  --color-warning-soft: rgba(234, 176, 77, 0.14);
+  --color-danger: #ef8c8c;
+  --color-danger-strong: #c74747; /* 危险实底（停止按钮等）在暗色下压深保对比 */
+  --color-danger-soft: rgba(239, 140, 140, 0.14);
+
+  /* —— 侧边栏（暗色下比页面背景再压深一级，与 #161311 拉开明度差） —— */
+  --sidebar-bg: #0f0c0a;          /* 比暗色背景 #161311 再压深一级，保证边界明度差可见 */
+  --sidebar-border: rgba(255, 255, 255, 0.14); /* 过渡线：侧边栏 → 页面（暗色下仍清晰） */
+  --sidebar-text: #d9d2c8;
+  --sidebar-text-muted: #8f877b;
+  --sidebar-hover-bg: rgba(255, 255, 255, 0.06);
+  --sidebar-active-bg: rgba(255, 138, 51, 0.26);
   --sidebar-active-text: #ffffff;
 
-  --topbar-bg: rgba(26, 32, 50, 0.85);
+  /* —— 顶栏 —— */
+  --topbar-bg: rgba(22, 19, 17, 0.85);
   --topbar-border: var(--color-border);
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
-  --shadow-md: 0 6px 16px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.55);
+  /* —— 遮罩 —— */
+  --overlay-bg: rgba(8, 6, 5, 0.6);
+
+  /* —— 阴影（暗色下加深加强，替代亮色下的"变浅"逻辑） —— */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 6px 16px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.6);
 }

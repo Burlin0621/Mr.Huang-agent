@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { storeToRefs } from 'pinia'
 
-import { DEFAULT_AGENT_ID } from '@/lib/agents'
+import { DEFAULT_AGENT_ID, findAgentById, type AgentAvatar as AgentAvatarValue } from '@/lib/agents'
+import { AGENT_TOOLS } from '@/lib/agent-tools'
 import {
   fetchSkillFromGithub,
   getGithubToken,
@@ -13,13 +15,19 @@ import {
   type ZipExpertImportResult,
 } from '@/lib/skillhub'
 import { useAgentsStore, type AgentView } from '@/stores/agents'
+import { useLlmStore } from '@/stores/llm'
 import { useSkillsStore } from '@/stores/skills'
+import AgentAvatar from '@/components/AgentAvatar.vue'
 import AppIcon from '@/components/AppIcon.vue'
+import AvatarPickerModal from '@/components/AvatarPickerModal.vue'
 import EmptyState from '@/components/EmptyState.vue'
 
 const router = useRouter()
 const agentsStore = useAgentsStore()
 const skillsStore = useSkillsStore()
+// 默认模型绑定的可选来源：全部模型配置（id + 名称 + modelIds）
+const llmStore = useLlmStore()
+const { configs } = storeToRefs(llmStore)
 
 /* —— 搜索与过滤 —— */
 
@@ -34,10 +42,36 @@ const filteredAgents = computed<AgentView[]>(() => {
   )
 })
 
-/* —— 行头像（图片加载失败时回退 emoji / 首字） —— */
+const selectedAgentId = ref<string | null>(null)
+const selectedAgent = computed<AgentView | null>(() => {
+  if (!filteredAgents.value.length) return null
+  return (
+    filteredAgents.value.find((agent) => agent.id === selectedAgentId.value) ??
+    filteredAgents.value[0]
+  )
+})
 
-/** 图片头像加载失败的智能体 id 集合（@error 时记入，触发回退显示） */
-const failedAvatarIds = reactive(new Set<string>())
+function selectAgent(agent: AgentView): void {
+  selectedAgentId.value = agent.id
+}
+
+function onAgentIndexKeydown(event: KeyboardEvent, agent: AgentView): void {
+  if (event.key !== 'Enter' && event.key !== ' ') return
+  event.preventDefault()
+  selectAgent(agent)
+}
+
+/** 详情卡上的默认模型标识：绑定已解析生效（配置仍存在）时返回「配置名 / 模型」文案，否则不展示 */
+const selectedAgentBindingLabel = computed<string>(() => {
+  const agent = selectedAgent.value
+  if (!agent?.modelConfigId) return ''
+  const config = configs.value.find((item) => item.id === agent.modelConfigId)
+  // 配置已被删除视为未绑定，不展示标识
+  if (!config) return ''
+  const modelLabel =
+    agent.modelId && config.modelIds.includes(agent.modelId) ? agent.modelId : '主模型'
+  return `${config.name} / ${modelLabel}`
+})
 
 /* —— 行「更多」菜单（同屏只开一个；点外部 / Esc 关闭） —— */
 
@@ -60,11 +94,13 @@ function onDocumentPointerDown(event: PointerEvent): void {
   closeMenu()
 }
 
-/** Esc 关闭：优先关模态（新建/编辑或 SkillHub），其次关菜单 */
+/** Esc 关闭：优先关模态（新建/编辑、更换头像或 SkillHub），最后关菜单 */
 function onDocumentKeydown(event: KeyboardEvent): void {
   if (event.key !== 'Escape') return
   if (modalOpen.value) {
     closeModal()
+  } else if (avatarPickerId.value) {
+    closeAvatarPicker()
   } else if (skillhubOpen.value) {
     closeSkillhubModal()
   } else if (openMenuId.value) {
@@ -124,11 +160,29 @@ interface AgentFormState {
   icon: string
   /** 标签以逗号分隔的原文，提交时再解析 */
   tags: string
+  /** 绑定的默认模型配置 id（''=未绑定，跟随对话当前选择） */
+  modelConfigId: string
+  /** 绑定的默认模型 id（''=该配置的主模型；仅 modelConfigId 非空时生效） */
+  modelId: string
+  /** 勾选的工具能力（agent-tools.ts 注册表的工具名；空数组=不挂工具） */
+  tools: string[]
+  /** 勾选的可加载技能（技能库中技能的 id；保存时与原关联做差量挂载/卸载） */
+  linkedSkillIds: string[]
 }
 
 /** 空表单（图标留空，展示时回退默认 emoji） */
 function createEmptyForm(): AgentFormState {
-  return { name: '', description: '', systemPrompt: '', icon: '', tags: '' }
+  return {
+    name: '',
+    description: '',
+    systemPrompt: '',
+    icon: '',
+    tags: '',
+    modelConfigId: '',
+    modelId: '',
+    tools: [],
+    linkedSkillIds: [],
+  }
 }
 
 const modalOpen = ref(false)
@@ -159,12 +213,24 @@ function openCreateModal(): void {
 function openEditModal(agent: AgentView): void {
   editingId.value = agent.id
   editingAgent.value = agent
+  // 默认模型绑定回填：绑定的配置已被删除时按未绑定（''）回填；
+  // 绑定的模型不在该配置 modelIds 中时按主模型（''）回填
+  const boundConfig = agent.modelConfigId
+    ? (configs.value.find((config) => config.id === agent.modelConfigId) ?? null)
+    : null
   form.value = {
     name: agent.name,
     description: agent.description,
     systemPrompt: agent.systemPrompt,
     icon: agent.icon,
     tags: agent.tags.join(TAGS_SEPARATOR),
+    modelConfigId: boundConfig?.id ?? '',
+    modelId:
+      boundConfig && agent.modelId && boundConfig.modelIds.includes(agent.modelId)
+        ? agent.modelId
+        : '',
+    tools: [...agent.tools],
+    linkedSkillIds: [...agent.linkedSkillIds],
   }
   formErrors.value = { name: '', description: '', systemPrompt: '' }
   modalOpen.value = true
@@ -186,6 +252,57 @@ function parseTags(input: string): string[] {
   )
 }
 
+/** 表单当前所选的模型配置对象（未选配置或配置已被删除时为 null） */
+const formModelConfig = computed(
+  () => configs.value.find((config) => config.id === form.value.modelConfigId) ?? null,
+)
+
+/**
+ * 「模型」下拉的显示值：''（主模型）在选项中无对应项（第一项 value 为其 modelId 本身），
+ * 直接绑定会出现空白选中态；读取时把 '' 解析为该配置主模型 id 仅用于展示，写入仍存所选 id。
+ */
+const formModelIdDisplay = computed<string>({
+  get: () => {
+    const config = formModelConfig.value
+    if (!config) return form.value.modelId
+    if (config.modelIds.includes(form.value.modelId)) return form.value.modelId
+    return config.modelIds[0] ?? ''
+  },
+  set: (value) => {
+    form.value.modelId = value
+  },
+})
+
+/** 切换「模型配置」下拉时校验已选模型：不在新配置的 modelIds 中则回退主模型（''） */
+function onFormConfigChange(): void {
+  const config = formModelConfig.value
+  if (!config || !config.modelIds.includes(form.value.modelId)) {
+    form.value.modelId = ''
+  }
+}
+
+/** 勾选/取消工具能力（内置与自定义智能体表单通用；内置保存后写入覆盖层 tools） */
+function toggleFormTool(name: string): void {
+  form.value.tools = form.value.tools.includes(name)
+    ? form.value.tools.filter((item) => item !== name)
+    : [...form.value.tools, name]
+}
+
+/** 「恢复默认工具」：把表单 tools 重置为该内置智能体代码定义的默认清单 */
+function resetFormToolsToDefault(): void {
+  const id = editingId.value
+  if (!id) return
+  const defaults = findAgentById(id)?.tools ?? []
+  form.value.tools = [...defaults]
+}
+
+/** 勾选/取消「可加载技能」（内置与自定义智能体表单通用；保存时与原关联做差量挂载/卸载） */
+function toggleFormSkill(skillId: string): void {
+  form.value.linkedSkillIds = form.value.linkedSkillIds.includes(skillId)
+    ? form.value.linkedSkillIds.filter((item) => item !== skillId)
+    : [...form.value.linkedSkillIds, skillId]
+}
+
 function submitForm(): void {
   const name = form.value.name.trim()
   const description = form.value.description.trim()
@@ -197,12 +314,23 @@ function submitForm(): void {
   }
   if (!name || !description || !systemPrompt) return
 
+  // 默认模型绑定：未选配置时两字段均为 ''（未绑定）；模型不在所选配置中时归一为主模型（''）
+  const boundConfig = form.value.modelConfigId
+    ? (configs.value.find((config) => config.id === form.value.modelConfigId) ?? null)
+    : null
   const payload = {
     name,
     description,
     systemPrompt,
     icon: form.value.icon.trim(),
     tags: parseTags(form.value.tags),
+    modelConfigId: boundConfig?.id ?? '',
+    modelId:
+      boundConfig && form.value.modelId && boundConfig.modelIds.includes(form.value.modelId)
+        ? form.value.modelId
+        : '',
+    // 工具能力：内置走覆盖层 tools，自定义按勾选写入列表
+    tools: [...form.value.tools],
   }
   if (editingId.value) {
     // 内置走覆盖层写入，自定义直接改列表；两分支共用同一套表单校验
@@ -211,8 +339,21 @@ function submitForm(): void {
     } else {
       agentsStore.updateCustomAgent(editingId.value, payload)
     }
+    // 可加载技能：与编辑前的原关联做差量（勾选补挂载、取消调卸载），未勾选项不触碰原关联
+    const originalSkillIds = editingAgent.value?.linkedSkillIds ?? []
+    for (const skillId of form.value.linkedSkillIds) {
+      if (!originalSkillIds.includes(skillId)) {
+        agentsStore.linkSkillToAgent(editingId.value, skillId)
+      }
+    }
+    for (const skillId of originalSkillIds) {
+      if (!form.value.linkedSkillIds.includes(skillId)) {
+        agentsStore.detachSkillFromAgent(editingId.value, skillId)
+      }
+    }
   } else {
-    agentsStore.addCustomAgent(payload)
+    // 新建自定义智能体：勾选的技能随表单一并写入 linkedSkillIds
+    agentsStore.addCustomAgent({ ...payload, linkedSkillIds: [...form.value.linkedSkillIds] })
   }
   modalOpen.value = false
 }
@@ -224,6 +365,33 @@ function resetBuiltinFromModal(): void {
   if (!window.confirm('确定恢复该内置智能体的默认设置吗？当前修改将被清除。')) return
   agentsStore.resetBuiltinAgent(agent.id)
   modalOpen.value = false
+}
+
+/* —— 更换头像弹窗：预览 / 上传图片 / 系统默认素材 / Emoji，确定后写入 store —— */
+
+/** 正在更换头像的智能体 id；null 表示弹窗关闭 */
+const avatarPickerId = ref<string | null>(null)
+
+/** 弹窗对应的智能体（按 id 实时取合并清单，跟随名称等字段变化） */
+const avatarPickerAgent = computed<AgentView | null>(
+  () => (avatarPickerId.value ? (agentsStore.findAgent(avatarPickerId.value) ?? null) : null),
+)
+
+/** 从更多菜单打开 */
+function openAvatarPicker(agent: AgentView): void {
+  closeMenu()
+  avatarPickerId.value = agent.id
+}
+
+function closeAvatarPicker(): void {
+  avatarPickerId.value = null
+}
+
+/** 确认更换：null 表示恢复该智能体默认头像（回退 icon emoji 展示） */
+function confirmAvatarPicker(avatar: AgentAvatarValue | null): void {
+  if (!avatarPickerId.value) return
+  agentsStore.setAgentAvatar(avatarPickerId.value, avatar)
+  avatarPickerId.value = null
 }
 
 /* —— SkillHub 弹窗：内置技能目录一键添加为自定义智能体 —— */
@@ -456,110 +624,135 @@ function clearGhToken(): void {
   <div class="page">
     <header class="page-head agents-head">
       <div>
+        <p class="eyebrow">智能体工作台</p>
         <h1>智能体中心</h1>
         <p>管理内置与自定义智能体人设，统一用于 AI 对话</p>
       </div>
       <div class="agents-head-actions">
-        <button class="btn btn-ghost" type="button" @click="openSkillhubModal">
-          <AppIcon name="sparkles" />
-          从 SkillHub 添加
-        </button>
         <button class="btn btn-primary" type="button" @click="openCreateModal">
           <AppIcon name="plus" />
           新建智能体
         </button>
+        <button class="btn btn-ghost" type="button" @click="openSkillhubModal">
+          <AppIcon name="sparkles" />
+          从 SkillHub 添加
+        </button>
       </div>
     </header>
 
-    <div class="agents-toolbar">
-      <div class="search-box">
-        <AppIcon name="search" />
-        <input
-          v-model="keyword"
-          class="search-input"
-          type="text"
-          placeholder="搜索名称、描述或标签…"
-        />
-      </div>
-      <span class="agents-count">共 {{ filteredAgents.length }} 个智能体</span>
-    </div>
-
-    <div v-if="filteredAgents.length" class="agents-list">
-      <article
-        v-for="agent in filteredAgents"
-        :key="agent.id"
-        class="agent-row"
-        :class="{ 'is-disabled': agent.disabled }"
-      >
-        <span class="agent-avatar" aria-hidden="true">
-          <img
-            v-if="agent.avatar && !failedAvatarIds.has(agent.id)"
-            :src="agent.avatar"
-            :alt="agent.name"
-            class="agent-avatar-img"
-            @error="failedAvatarIds.add(agent.id)"
-          />
-          <template v-else>{{ agent.icon || agent.name.slice(0, 1) }}</template>
-        </span>
-
-        <div class="agent-main">
-          <div class="agent-title-line">
-            <h2 class="agent-name">{{ agent.name }}</h2>
-            <span v-if="agent.builtin" class="chip chip-builtin">内置</span>
-            <span v-if="agent.customized" class="chip chip-modified">已修改</span>
-            <span v-if="agent.linkedSkillIds.length > 0" class="chip chip-linked">
-              {{ agent.linkedSkillIds.length }} 技能
-            </span>
-            <span v-if="agent.disabled" class="chip chip-off">停用</span>
-            <span v-for="tag in agent.tags" :key="tag" class="chip chip-tag">{{ tag }}</span>
+    <section v-if="filteredAgents.length" class="agent-workbench" aria-label="智能体工作台">
+      <aside class="agent-index" aria-label="智能体索引">
+        <div class="index-head">
+          <div>
+            <span class="section-kicker">档案索引</span>
+            <h2>智能体档案</h2>
           </div>
-          <p class="agent-desc">{{ agent.description }}</p>
+          <span class="agents-count">{{ filteredAgents.length }} 项</span>
         </div>
-
-        <div class="agent-actions">
+        <div class="index-tools">
+          <div class="search-box">
+            <AppIcon name="search" />
+            <input
+              v-model="keyword"
+              class="search-input"
+              type="text"
+              placeholder="搜索名称、描述或标签…"
+            />
+          </div>
+        </div>
+        <nav class="index-list" aria-label="智能体列表">
           <button
-            class="btn btn-ghost btn-sm"
+            v-for="(agent, index) in filteredAgents"
+            :key="agent.id"
+            class="index-item"
+            :class="{ 'is-selected': selectedAgent?.id === agent.id, 'is-disabled': agent.disabled }"
             type="button"
-            :disabled="agent.disabled"
-            title="跳转到 AI 对话并使用该智能体"
-            @click="startChat(agent)"
+            :aria-current="selectedAgent?.id === agent.id ? 'true' : undefined"
+            @click="selectAgent(agent)"
+            @keydown="onAgentIndexKeydown($event, agent)"
           >
-            <AppIcon name="chat" />
-            开始对话
+            <span class="index-number">{{ String(index + 1).padStart(2, '0') }}</span>
+            <span class="index-avatar" aria-hidden="true">
+              <AgentAvatar :avatar="agent.avatar" :icon="agent.icon" :name="agent.name" />
+            </span>
+            <span class="index-copy">
+              <strong>{{ agent.name }}</strong>
+              <span>{{ agent.disabled ? '停用' : '可用' }}</span>
+            </span>
+            <span class="index-skills">{{ agent.linkedSkillIds.length }} 技能</span>
           </button>
-          <div class="agent-more">
-            <button
-              class="icon-button"
-              type="button"
-              aria-label="更多操作"
-              @click.stop="toggleMenu(agent.id)"
-            >
-              <AppIcon name="more" />
+        </nav>
+      </aside>
+
+      <section v-if="selectedAgent" :key="selectedAgent.id" class="agent-detail" aria-live="polite">
+        <div class="detail-topline">
+          <span class="geo-ring" aria-hidden="true"></span>
+          <span class="section-kicker">当前档案</span>
+          <span class="detail-id">ID / {{ selectedAgent.id }}</span>
+        </div>
+        <div class="detail-identity">
+          <span class="detail-avatar" aria-hidden="true">
+            <AgentAvatar :avatar="selectedAgent.avatar" :icon="selectedAgent.icon" :name="selectedAgent.name" />
+          </span>
+          <div class="detail-title">
+            <div class="agent-title-line">
+              <h2>{{ selectedAgent.name }}</h2>
+              <span v-if="selectedAgent.builtin" class="chip chip-builtin">内置</span>
+              <span v-if="selectedAgent.customized" class="chip chip-modified">已修改</span>
+              <span v-if="selectedAgent.disabled" class="chip chip-off">停用</span>
+              <span v-if="selectedAgentBindingLabel" class="chip chip-tag" title="默认模型">
+                ⚙ {{ selectedAgentBindingLabel }}
+              </span>
+            </div>
+            <p class="detail-status"><span :class="['status-dot', { 'is-off': selectedAgent.disabled }]" />{{ selectedAgent.disabled ? '当前停用' : '当前可用' }}</p>
+          </div>
+          <div class="detail-primary-action">
+            <button class="btn btn-primary" type="button" :disabled="selectedAgent.disabled" @click="startChat(selectedAgent)">
+              <AppIcon name="chat" />
+              开始对话
             </button>
-            <div v-if="openMenuId === agent.id" class="agent-menu">
-              <button class="menu-item" type="button" @click="editAgent(agent)">编辑</button>
-              <button
-                v-if="agent.id !== DEFAULT_AGENT_ID"
-                class="menu-item"
-                type="button"
-                @click="toggleAgentDisabled(agent)"
-              >
-                {{ agent.disabled ? '启用' : '停用' }}
+            <div class="agent-more">
+              <button class="icon-button" type="button" aria-label="更多操作" @click.stop="toggleMenu(selectedAgent.id)">
+                <AppIcon name="more" />
               </button>
-              <button class="menu-item" type="button" @click="duplicateAgent(agent)">复制</button>
-              <button
-                v-if="!agent.builtin"
-                class="menu-item menu-danger"
-                type="button"
-                @click="removeAgent(agent)"
-              >
-                删除
-              </button>
+              <div v-if="openMenuId === selectedAgent.id" class="agent-menu">
+                <button class="menu-item" type="button" @click="editAgent(selectedAgent!)">编辑</button>
+                <button class="menu-item" type="button" @click="openAvatarPicker(selectedAgent!)">更换头像</button>
+                <button v-if="selectedAgent.id !== DEFAULT_AGENT_ID" class="menu-item" type="button" @click="toggleAgentDisabled(selectedAgent!)">{{ selectedAgent.disabled ? '启用' : '停用' }}</button>
+                <button class="menu-item" type="button" @click="duplicateAgent(selectedAgent!)">复制</button>
+                <button v-if="!selectedAgent.builtin" class="menu-item menu-danger" type="button" @click="removeAgent(selectedAgent!)">删除</button>
+              </div>
             </div>
           </div>
         </div>
-      </article>
-    </div>
+
+        <div class="detail-grid">
+          <section class="detail-section detail-summary">
+            <span class="section-kicker">摘要</span>
+            <p>{{ selectedAgent.description }}</p>
+          </section>
+          <section class="detail-section">
+            <span class="section-kicker">能力与技能</span>
+            <div v-if="selectedAgent.linkedSkillIds.length || selectedAgent.tags.length" class="detail-tags">
+              <span v-for="skillId in selectedAgent.linkedSkillIds" :key="skillId" class="chip chip-linked">{{ skillsStore.findSkill(skillId)?.name ?? skillId }}</span>
+              <span v-for="tag in selectedAgent.tags" :key="tag" class="chip chip-tag">{{ tag }}</span>
+            </div>
+            <p v-else class="muted-copy">暂无关联技能或标签</p>
+          </section>
+          <section class="detail-section detail-source">
+            <span class="section-kicker">来源</span>
+            <p>{{ selectedAgent.builtin ? '系统内置智能体' : '自定义智能体' }}<span v-if="selectedAgent.customized"> · 已保留自定义修改</span></p>
+          </section>
+          <section class="detail-section detail-secondary">
+            <span class="section-kicker">次级操作</span>
+            <div class="secondary-actions">
+              <button class="btn btn-ghost btn-sm" type="button" @click="editAgent(selectedAgent!)">编辑</button>
+              <button class="btn btn-ghost btn-sm" type="button" @click="duplicateAgent(selectedAgent!)">复制</button>
+            </div>
+          </section>
+        </div>
+      </section>
+    </section>
 
     <div v-else class="card">
       <EmptyState title="未找到匹配的智能体" description="换个关键词试试，或新建一个自定义智能体。">
@@ -779,6 +972,114 @@ function clearGhToken(): void {
             />
           </label>
 
+          <div class="field">
+            <span class="field-label">默认模型</span>
+            <div class="model-binding">
+              <select
+                v-model="form.modelConfigId"
+                class="field-input"
+                aria-label="默认模型配置"
+                @change="onFormConfigChange"
+              >
+                <option value="">跟随对话选择（不绑定）</option>
+                <option v-for="config in configs" :key="config.id" :value="config.id">
+                  {{ config.name }}
+                </option>
+              </select>
+              <select
+                v-model="formModelIdDisplay"
+                class="field-input"
+                aria-label="默认模型"
+                :disabled="!formModelConfig"
+              >
+                <template v-if="formModelConfig">
+                  <!-- 第一项即主模型（modelIds[0]），value 直接用 modelId 本身 -->
+                  <option
+                    v-for="(modelOption, index) in formModelConfig.modelIds"
+                    :key="modelOption"
+                    :value="modelOption"
+                  >
+                    {{ modelOption }}{{ index === 0 ? '（主）' : '' }}
+                  </option>
+                </template>
+                <option v-else value="">未选择配置</option>
+              </select>
+            </div>
+            <span class="field-hint">绑定后，对话中选中该智能体会自动切换到该模型，仍可随时手动更换</span>
+          </div>
+
+          <!-- 工具能力：内置与自定义均可勾选编辑；内置保存后写入覆盖层 tools -->
+          <div class="field">
+            <span class="field-label">工具能力</span>
+            <div class="tool-picker" role="group" aria-label="工具能力多选">
+              <label
+                v-for="tool in AGENT_TOOLS"
+                :key="tool.name"
+                class="tool-option"
+                :class="{ 'is-selected': form.tools.includes(tool.name) }"
+              >
+                <input
+                  type="checkbox"
+                  class="tool-option-input"
+                  :checked="form.tools.includes(tool.name)"
+                  @change="toggleFormTool(tool.name)"
+                />
+                <span class="tool-option-body">
+                  <span class="tool-option-title">
+                    {{ tool.name }}
+                    <span
+                      v-if="tool.name === 'http_post_json'"
+                      class="badge badge-warn tool-confirm-badge"
+                    >
+                      需确认
+                    </span>
+                  </span>
+                  <span class="tool-option-desc">{{ tool.description }}</span>
+                </span>
+              </label>
+              <span class="field-hint">
+                勾选后，该智能体在对话中可自主调用工具（桌面端生效，工具执行前可按需弹窗确认）。
+              </span>
+              <button
+                v-if="editingAgent?.builtin"
+                class="btn btn-ghost tool-reset-default"
+                type="button"
+                @click="resetFormToolsToDefault"
+              >
+                恢复默认工具
+              </button>
+            </div>
+          </div>
+
+          <!-- 可加载技能：内置与自定义均可勾选编辑；disabled 技能置灰不可选 -->
+          <div class="field">
+            <span class="field-label">可加载技能</span>
+            <div class="tool-picker" role="group" aria-label="可加载技能多选">
+              <label
+                v-for="skill in skillsStore.skills"
+                :key="skill.id"
+                class="tool-option"
+                :class="{ 'is-selected': form.linkedSkillIds.includes(skill.id), 'is-disabled': skill.disabled }"
+              >
+                <input
+                  type="checkbox"
+                  class="tool-option-input"
+                  :checked="form.linkedSkillIds.includes(skill.id)"
+                  :disabled="skill.disabled"
+                  @change="toggleFormSkill(skill.id)"
+                />
+                <span class="tool-option-body">
+                  <span class="tool-option-title">{{ skill.name }}</span>
+                  <span v-if="skill.description" class="tool-option-desc">{{ skill.description }}</span>
+                </span>
+              </label>
+              <span v-if="!skillsStore.skills.length" class="field-hint">技能库暂无技能，可先到技能中心添加。</span>
+              <span v-else class="field-hint">
+                勾选后，该智能体在对话时自动装载对应技能的方法论；已停用的技能置灰不可选。
+              </span>
+            </div>
+          </div>
+
           <footer class="modal-foot">
             <button
               v-if="editingAgent?.customized"
@@ -794,6 +1095,14 @@ function clearGhToken(): void {
         </form>
       </div>
     </div>
+
+    <!-- 更换头像模态：预览 / 上传图片 / 系统默认素材 / Emoji，确定后写入 store -->
+    <AvatarPickerModal
+      v-if="avatarPickerAgent"
+      :agent="avatarPickerAgent"
+      @close="closeAvatarPicker"
+      @confirm="confirmAvatarPicker"
+    />
   </div>
 </template>
 
@@ -824,80 +1133,11 @@ function clearGhToken(): void {
   flex-wrap: wrap;
 }
 
-.search-box {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 220px;
-  max-width: 420px;
-  height: 40px;
-  padding: 0 var(--space-3);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  transition: border-color var(--transition-fast);
-}
-
-.search-box:focus-within {
-  border-color: var(--color-brand);
-}
-
-.search-box svg {
-  width: 16px;
-  height: 16px;
-  color: var(--color-text-muted);
-}
-
-.search-input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  background: none;
-  color: var(--color-text);
-  font: inherit;
-  outline: none;
-}
-
-.search-input::placeholder {
-  color: var(--color-text-muted);
-}
-
+/* 搜索框样式已上提为 base.css 全局 .search-box / .search-input */
 .agents-count {
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
   white-space: nowrap;
-}
-
-/* —— 行式列表：垂直堆叠的独立圆角行 —— */
-.agents-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.agent-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  flex-wrap: wrap;
-  padding: var(--space-4) var(--space-5);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  transition:
-    background-color var(--transition-fast),
-    border-color var(--transition-theme);
-}
-
-.agent-row:hover {
-  background: var(--color-surface-muted);
-}
-
-/* 停用的行整体降饱和 */
-.agent-row.is-disabled {
-  opacity: 0.62;
-  filter: saturate(0.55);
 }
 
 /* —— 圆形头像 —— */
@@ -955,44 +1195,7 @@ function clearGhToken(): void {
   white-space: nowrap;
 }
 
-/* —— 徽章 chips —— */
-.chip {
-  display: inline-flex;
-  align-items: center;
-  height: 22px;
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-full);
-  font-size: var(--font-size-xs);
-  white-space: nowrap;
-}
-
-.chip-builtin {
-  background: var(--color-brand-soft);
-  color: var(--color-brand);
-}
-
-/* 已被覆盖层修改的内置智能体提示徽标 */
-.chip-modified {
-  background: var(--color-warning-soft);
-  color: var(--color-warning);
-}
-
-/* 停用状态徽标（名称旁） */
-.chip-off {
-  background: var(--color-warning-soft);
-  color: var(--color-warning);
-}
-
-/* 关联技能数量徽标（合集智能体名称旁，表示对话时自动装载这些技能） */
-.chip-linked {
-  background: var(--color-success-soft);
-  color: var(--color-success);
-}
-
-.chip-tag {
-  background: var(--color-surface-muted);
-  color: var(--color-text-secondary);
-}
+/* 徽章 chips 样式已上提为 base.css 全局 .chip / .chip-* 系列 */
 
 /* —— 行操作区（右侧） —— */
 .agent-actions {
@@ -1026,33 +1229,7 @@ function clearGhToken(): void {
   box-shadow: var(--shadow-md);
 }
 
-.menu-item {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  padding: 8px var(--space-3);
-  border-radius: var(--radius-sm);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-md);
-  text-align: left;
-  transition:
-    background-color var(--transition-fast),
-    color var(--transition-fast);
-}
-
-.menu-item:hover {
-  background: var(--color-surface-muted);
-  color: var(--color-text);
-}
-
-.menu-danger {
-  color: var(--color-danger);
-}
-
-.menu-danger:hover {
-  background: var(--color-danger-soft);
-  color: var(--color-danger);
-}
+/* 菜单项样式已上提为 base.css 全局 .menu-item / .menu-danger */
 
 /* —— 窄屏：操作区整体换行到第二行，描述保持截断 —— */
 @media (max-width: 639px) {
@@ -1063,123 +1240,379 @@ function clearGhToken(): void {
   }
 }
 
-/* —— 新建 / 编辑模态 —— */
-.modal-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-5);
-  background: rgba(8, 12, 24, 0.55);
+/* —— Archive Index + Master-Detail 工作台 —— */
+.eyebrow,
+.section-kicker {
+  display: block;
+  margin-bottom: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
 }
 
-.modal {
-  width: 100%;
-  max-width: 560px;
-  max-height: calc(100vh - var(--space-8));
-  overflow-y: auto;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-}
-
-.modal-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-5) var(--space-6);
+.agents-head {
+  align-items: flex-start;
+  padding-bottom: var(--space-5);
   border-bottom: 1px solid var(--color-border);
 }
 
-.modal-head h2 {
-  font-size: var(--font-size-lg);
-  font-weight: 600;
+.agents-head h1 {
+  color: var(--color-text);
+  letter-spacing: -0.025em;
 }
 
-.modal-form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-6);
+.agents-head p:not(.eyebrow) {
+  margin-top: var(--space-2);
+  color: var(--color-text-secondary);
 }
 
-.field {
-  display: flex;
-  flex-direction: column;
+.agents-head-actions {
   gap: var(--space-2);
 }
 
-.field-label {
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-}
-
-.field-required {
-  margin-left: 2px;
-  color: var(--color-danger);
-}
-
-.field-input {
-  padding: 8px var(--space-3);
-  background: var(--color-surface);
+.agent-workbench {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.34fr) minmax(0, 0.66fr);
+  min-height: 560px;
+  margin-top: var(--space-5);
+  overflow: hidden;
+  background: var(--color-bg);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+}
+
+.agent-index {
+  min-width: 0;
+  padding: var(--space-5);
+  background: var(--color-surface-muted);
+  border-right: 1px solid var(--color-border);
+}
+
+.index-head,
+.detail-topline,
+.detail-identity,
+.detail-primary-action,
+.secondary-actions {
+  display: flex;
+  align-items: center;
+}
+
+.index-head {
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.index-head h2 {
   color: var(--color-text);
-  font: inherit;
-  transition: border-color var(--transition-fast);
+  font-size: var(--font-size-md);
 }
 
-.field-input::placeholder {
+.index-tools .search-box {
+  max-width: none;
+  min-width: 0;
+  height: 36px;
+  background: var(--color-surface);
+  border-color: var(--color-border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.index-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--space-4);
+}
+
+.index-item {
+  display: grid;
+  grid-template-columns: 26px 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 58px;
+  padding: var(--space-2) var(--space-2);
+  color: var(--color-text);
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+/* hover 暖底（brand-soft 双主题暖色），选中保持 surface 底 + 左橙条 */
+.index-item:hover {
+  background: var(--color-brand-soft);
+  border-color: transparent;
+}
+
+.index-item.is-selected {
+  background: var(--color-surface);
+  border-color: var(--color-border-strong);
+  box-shadow: inset 3px 0 0 var(--color-brand);
+}
+
+.index-item.is-disabled {
+  opacity: 0.58;
+}
+
+.index-number,
+.index-skills,
+.index-copy span,
+.detail-id,
+.detail-status,
+.muted-copy {
   color: var(--color-text-muted);
-}
-
-.field-input:focus {
-  outline: none;
-  border-color: var(--color-brand);
-}
-
-.field-textarea {
-  resize: vertical;
-  min-height: 96px;
-  line-height: 1.6;
-}
-
-.field-error {
-  color: var(--color-danger);
   font-size: var(--font-size-xs);
 }
 
-.icon-field {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
+.index-number {
+  font-variant-numeric: tabular-nums;
 }
 
+.index-avatar {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--color-brand-soft);
+  border-radius: var(--radius-sm);
+}
+
+.index-avatar .agent-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+}
+
+.index-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.index-copy strong {
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.index-skills {
+  white-space: nowrap;
+}
+
+.agent-detail {
+  min-width: 0;
+  padding: clamp(24px, 5vw, 56px);
+  background: var(--color-surface);
+  animation: detail-arrive 180ms ease both;
+}
+
+@keyframes detail-arrive {
+  from { opacity: 0.7; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.detail-topline {
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.detail-topline .section-kicker {
+  margin: 0;
+}
+
+/* 品牌几何点缀：空心圆环（纯装饰） */
+.geo-ring {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  margin-right: var(--space-2);
+  border: 2px solid var(--color-brand-200);
+  border-radius: 50%;
+}
+
+.detail-identity {
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-5) 0 clamp(28px, 5vw, 48px);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.detail-avatar {
+  display: inline-flex;
+  width: 72px;
+  height: 72px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--color-brand-soft);
+  border-radius: var(--radius-sm);
+}
+
+.detail-avatar .agent-avatar {
+  width: 72px;
+  height: 72px;
+  border-radius: var(--radius-sm);
+}
+
+.detail-title {
+  min-width: 0;
+  flex: 1;
+}
+
+.detail-title h2 {
+  color: var(--color-text);
+  font-size: clamp(24px, 4vw, 34px);
+  font-weight: var(--font-weight-display);
+  letter-spacing: -0.035em;
+}
+
+/* 能力/技能 chip：信息语义走 info 蓝（贴纸感软底），与行动橙不混用 */
+.detail-tags .chip.chip-linked {
+  background: var(--color-info-soft);
+  color: var(--color-info-500);
+}
+
+.detail-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--space-2);
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  background: var(--color-success);
+  border-radius: 50%;
+}
+
+.status-dot.is-off { background: var(--color-text-muted); }
+
+.detail-primary-action {
+  align-items: center;
+  align-self: flex-start;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(180px, 0.65fr);
+  gap: 0 var(--space-5);
+}
+
+.detail-section {
+  min-width: 0;
+  padding: var(--space-5) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.detail-section .section-kicker {
+  margin-bottom: var(--space-3);
+}
+
+.detail-summary p,
+.detail-source p {
+  max-width: 62ch;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-md);
+  line-height: 1.75;
+}
+
+.detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.secondary-actions {
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+@media (max-width: 767px) {
+  .agent-workbench {
+    display: block;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .agent-index {
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .index-list {
+    max-width: 100%;
+    flex-direction: row;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .index-item {
+    flex: 0 0 min(240px, 72vw);
+  }
+
+  .agent-detail {
+    padding: var(--space-5);
+  }
+
+  .detail-identity {
+    flex-wrap: wrap;
+  }
+
+  .detail-primary-action {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .detail-primary-action .btn-primary {
+    flex: 1;
+  }
+
+  .detail-grid {
+    display: block;
+  }
+
+  .detail-section {
+    padding: var(--space-4) 0;
+  }
+}
+
+/* —— 新建 / 编辑模态 —— */
+/* 模态与表单字段样式已上提为 base.css 全局 .modal-* / .field-* 系列 */
+/* 图标预览在弹窗内保持 40px（不随行内 .agent-avatar 的 48px） */
 .icon-preview {
   width: 40px;
   height: 40px;
   font-size: var(--font-size-lg);
 }
 
-.icon-field .field-input {
-  flex: 1;
-}
-
-.modal-foot {
+/* 默认模型绑定：配置与模型两个下拉纵向排列 */
+.model-binding {
   display: flex;
-  justify-content: flex-end;
-  gap: var(--space-3);
-  padding-top: var(--space-2);
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
-/* 「恢复默认」靠左，与取消/保存分开 */
-.modal-reset {
-  margin-right: auto;
+.field-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
 }
 
 /* —— SkillHub 添加模态 —— */
@@ -1349,5 +1782,96 @@ function clearGhToken(): void {
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
   line-height: 1.5;
+}
+
+/* —— 工具能力编辑器 —— */
+.tool-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.tool-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.tool-option:hover {
+  border-color: var(--color-border-strong);
+}
+
+.tool-option.is-selected {
+  border-color: var(--color-brand);
+  background: var(--color-brand-soft);
+}
+
+/* 停用技能置灰不可选 */
+.tool-option.is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tool-option-input {
+  margin-top: 3px;
+  accent-color: var(--color-brand);
+}
+
+.tool-option-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tool-option-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.tool-confirm-badge {
+  font-family: inherit;
+}
+
+.tool-reset-default {
+  align-self: flex-start;
+  font-size: var(--font-size-xs);
+}
+
+.tool-option-desc {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+}
+
+.tool-picker-readonly {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
+}
+
+.tool-readonly-tag {
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-brand-soft);
+  color: var(--color-brand);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
 }
 </style>

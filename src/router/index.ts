@@ -4,10 +4,15 @@ import type { RouteRecordRaw } from 'vue-router'
 import AgentsView from '@/views/AgentsView.vue'
 import ChatView from '@/views/ChatView.vue'
 import DashboardView from '@/views/DashboardView.vue'
-import DataCenterView from '@/views/DataCenterView.vue'
+import GroupChatView from '@/views/GroupChatView.vue'
+import PromptsView from '@/views/PromptsView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import SkillsView from '@/views/SkillsView.vue'
 import TasksView from '@/views/TasksView.vue'
+import TodayTopicsView from '@/views/TodayTopicsView.vue'
+import VaultView from '@/views/VaultView.vue'
+import WechatWritingView from '@/views/WechatWritingView.vue'
+import XhsWritingView from '@/views/XhsWritingView.vue'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -24,10 +29,35 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '工作台' },
   },
   {
-    path: '/chat',
+    // :conversationId 可选：不带 id 为「新对话草稿」态，带 id 打开会话工作区中的指定对话
+    path: '/chat/:conversationId?',
     name: 'chat',
     component: ChatView,
     meta: { title: 'AI 对话' },
+  },
+  {
+    path: '/group-chat',
+    name: 'group-chat',
+    component: GroupChatView,
+    meta: { title: '群聊协作' },
+  },
+  {
+    path: '/wechat-writing',
+    name: 'wechat-writing',
+    component: WechatWritingView,
+    meta: { title: '公众号写作' },
+  },
+  {
+    path: '/xhs-writing',
+    name: 'xhs-writing',
+    component: XhsWritingView,
+    meta: { title: '小红书写作' },
+  },
+  {
+    path: '/today-topics',
+    name: 'today-topics',
+    component: TodayTopicsView,
+    meta: { title: '今日选题' },
   },
   {
     path: '/agents',
@@ -42,16 +72,22 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '技能中心' },
   },
   {
+    path: '/prompts',
+    name: 'prompts',
+    component: PromptsView,
+    meta: { title: '提示词库' },
+  },
+  {
+    path: '/vault',
+    name: 'vault',
+    component: VaultView,
+    meta: { title: '笔记库' },
+  },
+  {
     path: '/tasks',
     name: 'tasks',
     component: TasksView,
     meta: { title: '任务中心' },
-  },
-  {
-    path: '/data',
-    name: 'data-center',
-    component: DataCenterView,
-    meta: { title: '数据中心' },
   },
   {
     path: '/settings',

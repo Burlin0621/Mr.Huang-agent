@@ -99,6 +99,7 @@ function buildConfigFromForm(): LlmConfig {
     temperature: clampField(Number(form.temperature), 0, 2),
     timeoutSeconds: Math.round(clampField(Number(form.timeoutSeconds), 1, 3600)),
     maxRetries: Math.round(clampField(Number(form.maxRetries), 0, 5)),
+    supportsVision: form.supportsVision === true,
   }
 }
 
@@ -267,6 +268,13 @@ async function runTest(): Promise<void> {
           <div class="config-title-row">
             <span class="config-name">{{ config.name }}</span>
             <span class="badge badge-info">{{ providerLabel(config.providerKey) }}</span>
+            <span
+              v-if="config.supportsVision"
+              class="badge badge-vision"
+              title="已勾选「支持视觉」，发送图片附件不会提示"
+            >
+              视觉
+            </span>
             <span v-if="config.id === llmStore.activeConfigId" class="badge badge-muted">
               当前使用
             </span>
@@ -525,6 +533,17 @@ async function runTest(): Promise<void> {
             step="1"
           />
         </label>
+
+        <label class="field field-wide vision-check">
+          <span class="field-label">模型能力</span>
+          <label class="vision-check-row">
+            <input v-model="form.supportsVision" type="checkbox" />
+            <span>支持视觉（可接收图片附件）</span>
+          </label>
+          <span class="field-hint">
+            勾选后对话中发送图片附件不再提示「模型可能不支持图片」。仅影响本地提示，不会改变请求格式。
+          </span>
+        </label>
       </div>
 
       <p v-if="formErrors.length > 0" class="form-errors" role="alert">
@@ -663,6 +682,26 @@ async function runTest(): Promise<void> {
 
 .btn-danger {
   color: var(--color-danger);
+}
+
+.badge-vision {
+  background: var(--color-brand-soft);
+  color: var(--color-brand);
+}
+
+.vision-check {
+  gap: var(--space-1);
+}
+
+.vision-check-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+}
+
+.vision-check-row input {
+  accent-color: var(--color-brand);
 }
 
 .btn-danger:not(:disabled):hover {

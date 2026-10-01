@@ -5,6 +5,7 @@ type IconName =
   | 'data'
   | 'settings'
   | 'chat'
+  | 'group-chat'
   | 'menu'
   | 'sun'
   | 'moon'
@@ -17,6 +18,7 @@ type IconName =
   | 'more'
   | 'check'
   | 'chevron-down'
+  | 'arrow-right'
   | 'close'
   | 'download'
   | 'upload'
@@ -24,6 +26,13 @@ type IconName =
   | 'trash'
   | 'search'
   | 'edit'
+  | 'archive'
+  | 'quote'
+  | 'pen'
+  | 'compass'
+  | 'note'
+  | 'refresh'
+  | 'send'
 
 defineProps<{ name: IconName }>()
 </script>
@@ -60,6 +69,12 @@ defineProps<{ name: IconName }>()
     <template v-else-if="name === 'chat'">
       <path d="M21 11.5c0 4.14-4.03 7.5-9 7.5-1.02 0-2-.14-2.9-.4L4 21l1.5-4.1C4.2 15.7 3 13.7 3 11.5 3 7.36 7.03 4 12 4s9 3.36 9 7.5z" />
     </template>
+    <template v-else-if="name === 'group-chat'">
+      <path d="M21 11.5c0 4.14-4.03 7.5-9 7.5-1.02 0-2-.14-2.9-.4L4 21l1.5-4.1C4.2 15.7 3 13.7 3 11.5 3 7.36 7.03 4 12 4s9 3.36 9 7.5z" />
+      <circle cx="8.5" cy="11.5" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="11.5" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="15.5" cy="11.5" r="0.9" fill="currentColor" stroke="none" />
+    </template>
     <template v-else-if="name === 'menu'">
       <path d="M3 6h18M3 12h18M3 18h18" />
     </template>
@@ -95,6 +110,27 @@ defineProps<{ name: IconName }>()
       <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z" />
       <path d="M19 17l.7 1.8L21.5 19.5l-1.8.7L19 22l-.7-1.8-1.8-.7 1.8-.7L19 17z" />
     </template>
+    <template v-else-if="name === 'pen'">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7.5 18.5 3 20l1.5-4.5L16.5 3.5z" />
+    </template>
+    <template v-else-if="name === 'compass'">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M15.5 8.5l-2.1 5-4.9 2 2.1-5 4.9-2z" />
+    </template>
+    <template v-else-if="name === 'note'">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <path d="M14 2v6h6" />
+      <path d="M9 13h6M9 17h4" />
+    </template>
+    <template v-else-if="name === 'refresh'">
+      <path d="M21 12a9 9 0 1 1-2.64-6.36L21 8" />
+      <path d="M21 3v5h-5" />
+    </template>
+    <template v-else-if="name === 'send'">
+      <path d="M22 2L11 13" />
+      <path d="M22 2l-7 20-4-9-9-4 20-7z" />
+    </template>
     <template v-else-if="name === 'more'">
       <circle cx="5" cy="12" r="1" fill="currentColor" stroke="none" />
       <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
@@ -105,6 +141,9 @@ defineProps<{ name: IconName }>()
     </template>
     <template v-else-if="name === 'chevron-down'">
       <path d="M6 9l6 6 6-6" />
+    </template>
+    <template v-else-if="name === 'arrow-right'">
+      <path d="M5 12h14M13 6l6 6-6 6" />
     </template>
     <template v-else-if="name === 'close'">
       <path d="M18 6L6 18M6 6l12 12" />
@@ -128,6 +167,15 @@ defineProps<{ name: IconName }>()
     </template>
     <template v-else-if="name === 'edit'">
       <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+    </template>
+    <template v-else-if="name === 'archive'">
+      <rect x="3" y="4" width="18" height="4" rx="1.5" />
+      <path d="M5 8v11a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 19V8" />
+      <path d="M10 12h4" />
+    </template>
+    <template v-else-if="name === 'quote'">
+      <path d="M10 11H6.5A2.5 2.5 0 0 1 4 8.5v-1A2.5 2.5 0 0 1 6.5 5h1A2.5 2.5 0 0 1 10 7.5V14a4 4 0 0 1-4 4" />
+      <path d="M20 11h-3.5A2.5 2.5 0 0 1 14 8.5v-1A2.5 2.5 0 0 1 16.5 5h1A2.5 2.5 0 0 1 20 7.5V14a4 4 0 0 1-4 4" />
     </template>
     <template v-else>
       <path d="M12 5v14M5 12h14" />

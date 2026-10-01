@@ -29,6 +29,13 @@ export const PROVIDER_PRESETS: ModelProviderPreset[] = [
     desc: '智谱 AI 开放平台，支持 GLM 全系列模型',
   },
   {
+    key: 'zhipu-token-plan',
+    label: '智谱 Token Plan',
+    baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
+    apiKeyOptional: false,
+    desc: '智谱 Coding 套餐（Token Plan）订阅 Key 专用接口',
+  },
+  {
     key: 'deepseek',
     label: 'DeepSeek',
     baseUrl: 'https://api.deepseek.com/v1',

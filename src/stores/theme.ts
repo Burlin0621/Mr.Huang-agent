@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
+import { storageGet, storageSet } from '@/lib/storage'
 
 /** 用户可选择的主题偏好：跟随系统 / 浅色 / 深色 */
 export type ThemePreference = 'system' | 'light' | 'dark'
@@ -20,7 +21,7 @@ const systemMedia = window.matchMedia('(prefers-color-scheme: dark)')
 
 function readPreference(): ThemePreference {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY)
+    const stored = storageGet(STORAGE_KEY)
     if (stored === 'system' || stored === 'light' || stored === 'dark') {
       return stored
     }
@@ -52,6 +53,12 @@ export const useThemeStore = defineStore('theme', () => {
 
   function applyToDocument(theme: ResolvedTheme): void {
     document.documentElement.dataset.theme = theme
+    // 桌面端：同步原生窗口按钮（titleBarOverlay）配色；web 环境无该 API，静默跳过
+    try {
+      window.mrHuangDesktop?.setWindowTitleBar?.(theme)
+    } catch {
+      // 同步失败不影响页面主题
+    }
   }
 
   systemMedia.addEventListener('change', (event) => {
@@ -61,7 +68,7 @@ export const useThemeStore = defineStore('theme', () => {
   // 偏好变化 → 持久化到 localStorage
   watch(preference, (next) => {
     try {
-      localStorage.setItem(STORAGE_KEY, next)
+      storageSet(STORAGE_KEY, next)
     } catch {
       // 持久化失败时静默降级（仅当前会话生效）
     }

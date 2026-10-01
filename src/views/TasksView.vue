@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
 </script>
 
@@ -14,12 +13,7 @@ import EmptyState from '@/components/EmptyState.vue'
       <EmptyState
         title="暂无任务"
         description="任务中心模块建设中，开放后可在这里创建、分派与跟踪任务。"
-      >
-        <button class="btn btn-primary" type="button" disabled>
-          <AppIcon name="plus" />
-          新建任务（即将开放）
-        </button>
-      </EmptyState>
+      />
     </section>
   </div>
 </template>
